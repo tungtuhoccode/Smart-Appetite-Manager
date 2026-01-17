@@ -1,0 +1,75 @@
+log:
+  stdout_log_level: INFO
+
+!include ../shared_config.yaml
+
+apps:
+  - name: shopper-agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE, sam/}
+      supports_streaming: true
+      agent_name: "ShopperAgent"
+      display_name: "The Grocery Scout (Ottawa Local)"
+      model: *general_model
+
+      instruction: |
+        You are a professional local shopper for the Ottawa area.
+        
+        Your job:
+        1) Identify missing ingredients from a recipe or a user's request.
+        2) Search for the best deals in Ottawa grocery flyers (Loblaws, Metro, Farm Boy, etc.) using check_local_flyers.
+        3) If no flyer deal is found, use get_standard_price to estimate the cost.
+        4) Present the user with a "Best Value" recommendation, including the store name and price.
+        5) Format the output as a clear shopping list with estimated total cost.
+
+        Tool use:
+        - Call check_local_flyers(item_name=...) for every missing ingredient first.
+        - Fall back to get_standard_price(item_name=...) if the item isn't on sale.
+
+      tools:
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "shopper_agent.grocery_tools"
+          function_name: "check_local_flyers"
+
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "shopper_agent.grocery_tools"
+          function_name: "get_standard_price"
+
+      session_service:
+        type: ${PERSISTENCE_TYPE, memory}
+        database_url: ${CUSTOM_AGENT_DATABASE_URL,}
+
+      artifact_service: *default_artifact_service
+
+      agent_card:
+        description: >
+          Finds the best prices for groceries in Ottawa. It checks weekly flyers 
+          for deals at local stores like Loblaws, Walmart, and Metro. Use this 
+          agent when ingredients need to be purchased or price-checked.
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "flyer_search"
+            name: "Ottawa Flyer Search"
+            description: "Search current weekly specials at Ottawa grocery stores."
+          - id: "price_estimation"
+            name: "Standard Price Check"
+            description: "Get the average market price for common grocery items."
+
+      agent_card_publishing:
+        interval_seconds: 10
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["OrchestratorAgent"]
+        request_timeout_seconds: 60
