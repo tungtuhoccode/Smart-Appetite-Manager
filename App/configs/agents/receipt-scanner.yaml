@@ -1,0 +1,72 @@
+log:
+  stdout_log_level: INFO
+
+!include ../shared_config.yaml
+
+apps:
+  - name: receipt-scanner_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE, sam/}
+      supports_streaming: false
+      agent_name: "ReceiptScanner"
+      display_name: "Receipt Scanner"
+      model: *general_model
+
+      instruction: |
+        You extract grocery items from receipt images or OCR text.
+
+        Workflow:
+        1) If the user provides a receipt image, use image tools to extract text.
+        2) Call parse_receipt_text with the extracted text.
+        3) Return a clean list in this table format:
+           product_name | quantity | quantity_unit | unit
+
+        Rules:
+        - Use the tool output exactly; do not invent items.
+        - If OCR is unclear, ask a follow-up question.
+        - Skip totals, taxes, and payment lines.
+
+      tools:
+        - tool_type: builtin-group
+          group_name: artifact_management
+        - tool_type: builtin-group
+          group_name: image_tools
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "receipt_agent.receipt_tools"
+          function_name: "parse_receipt_text"
+
+      session_service:
+        type: ${PERSISTENCE_TYPE, memory}
+        database_url: ${CUSTOM_AGENT_DATABASE_URL,}
+
+      artifact_service: *default_artifact_service
+
+      agent_card:
+        title: "Receipt Scanner"
+        description: >
+          Extracts grocery items from receipt images or OCR text and returns
+          a structured list with quantities and units. Use this agent when
+          users ask to scan receipts, parse receipt images, or convert receipts
+          into grocery item lists.
+        defaultInputModes: ["text", "image"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "receipt_parsing"
+            name: "Receipt Parsing"
+            description: "Parse receipt images or OCR text into grocery item lists."
+
+      agent_card_publishing:
+        interval_seconds: 10
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["OrchestratorAgent"]
