@@ -1,9 +1,44 @@
 import logging
 import httpx
 import asyncio
+import os
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk import trace, set_tag
 from typing import Any, Dict, Optional, List
 
 log = logging.getLogger(__name__)
+
+# Initialize Sentry if DSN is present
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn and sentry_dsn.startswith("https"):
+    try:
+        # FILTER: Drop noisy events (blue dots) that aren't real errors
+        def filter_noise(event, hint):
+            # If it's just a log message (not an exception) and level is INFO/DEBUG, drop it.
+            if 'exception' not in event and event.get('level') in ['info', 'debug']:
+                return None
+            return event
+
+        sentry_logging = LoggingIntegration(
+            level=logging.INFO,        # Breadcrumbs (Timeline)
+            event_level=logging.ERROR  # Issues (Alerts)
+        )
+        
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            integrations=[sentry_logging],
+            traces_sample_rate=1.0, 
+            profiles_sample_rate=1.0, 
+            environment="hackathon-demo",
+            send_default_pii=True,
+            before_send=filter_noise 
+        )
+        log.info("[ShopperTools] Sentry Initialized (Performance + Tagging Enabled).")
+    except Exception as e:
+        log.warning(f"[ShopperTools] Failed to initialize Sentry: {e}")
+else:
+    log.warning("[ShopperTools] Sentry DSN not found or invalid. Skipping initialization.")
 
 # List of common grocery chains in Ottawa to prioritize and validate
 OTTAWA_GROCERS = [
@@ -12,6 +47,15 @@ OTTAWA_GROCERS = [
     "whole foods", "giant tiger", "costco", "t&t"
 ]
 
+def safe_set_tag(key: str, value: Any):
+    """Safely sets a Sentry tag, ignoring errors if Sentry is not ready."""
+    try:
+        if sentry_sdk.Hub.current.client:
+            set_tag(key, value)
+    except Exception:
+        pass
+
+@trace
 async def check_local_flyers(
     item_name: str,
     location: str = "Ottawa, Ontario, Canada", 
@@ -20,6 +64,8 @@ async def check_local_flyers(
     tool_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Fetches real-time local grocery deals with strict Ottawa-centric filtering."""
+    safe_set_tag("search_item", item_name)
+    safe_set_tag("search_type", "flyer")
     log.info(f"[ShopperTools] Checking flyers for: {item_name}")
     
     api_key = tool_config.get("serpapi_key") if tool_config else None
@@ -107,12 +153,15 @@ async def check_local_flyers(
         log.error(f"[ShopperTools] API failure: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
+@trace
 async def get_standard_price(
     item_name: str,
     location: str = "Ottawa, Ontario, Canada",
     tool_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Fetches key injected from YAML for standard price lookup."""
+    safe_set_tag("search_item", item_name)
+    safe_set_tag("search_type", "standard_price")
     log.info(f"[ShopperTools] Checking standard price for: {item_name}")
     api_key = tool_config.get("serpapi_key") if tool_config else None
     if not api_key:
@@ -150,12 +199,15 @@ async def get_standard_price(
         log.error(f"[ShopperTools] Standard Price Check failed: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
+@trace
 async def find_nearest_store_address(
     store_name: str,
     location: str,
     tool_config: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Finds the address and ensures it is actually in Ottawa."""
+    safe_set_tag("search_item", store_name)
+    safe_set_tag("search_type", "store_address")
     api_key = tool_config.get("serpapi_key") if tool_config else None
     if not api_key: return None
     
@@ -186,6 +238,7 @@ async def find_nearest_store_address(
         log.warning(f"[ShopperTools] Address lookup failed: {e}")
     return None
 
+@trace
 async def find_best_deals_batch(
     items: List[str],
     location: str = "Ottawa, Ontario, Canada",
@@ -193,38 +246,45 @@ async def find_best_deals_batch(
     tool_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Orchestrates batch search with strict geographical verification."""
-    results = {}
-    address_cache = {}
-    
-    for item in items:
-        response = await check_local_flyers(item, location, limit=5, tool_config=tool_config)
+    try:
+        safe_set_tag("batch_size", len(items))
+        safe_set_tag("search_type", "batch")
+        results = {}
+        address_cache = {}
         
-        if response.get("status") == "success":
-            enriched_deals = []
-            for deal in response.get("deals", []):
-                store_name = deal.get("store")
-                
-                if store_name in address_cache:
-                    address = address_cache[store_name]
+        for item in items:
+            response = await check_local_flyers(item, location, limit=5, tool_config=tool_config)
+            
+            if response.get("status") == "success":
+                enriched_deals = []
+                for deal in response.get("deals", []):
+                    store_name = deal.get("store")
+                    
+                    if store_name in address_cache:
+                        address = address_cache[store_name]
+                    else:
+                        address = await find_nearest_store_address(store_name, location, tool_config)
+                        address_cache[store_name] = address
+
+                    # ONLY include deals with a verified Ottawa address
+                    if address:
+                        enriched_deals.append({
+                            "store": store_name,
+                            "address": address,
+                            "price": deal.get("price"),
+                            "item_title": deal.get("item"),
+                            "link": deal.get("product_link")
+                        })
+
+                if enriched_deals:
+                    results[item] = {"found": True, "options": enriched_deals}
                 else:
-                    address = await find_nearest_store_address(store_name, location, tool_config)
-                    address_cache[store_name] = address
-
-                # ONLY include deals with a verified Ottawa address
-                if address:
-                    enriched_deals.append({
-                        "store": store_name,
-                        "address": address,
-                        "price": deal.get("price"),
-                        "item_title": deal.get("item"),
-                        "link": deal.get("product_link")
-                    })
-
-            if enriched_deals:
-                results[item] = {"found": True, "options": enriched_deals}
+                    results[item] = {"found": False, "note": "No verified local Ottawa deals found."}
             else:
-                results[item] = {"found": False, "note": "No verified local Ottawa deals found."}
-        else:
-            results[item] = {"found": False, "note": "No flyer deals found."}
+                results[item] = {"found": False, "note": "No flyer deals found."}
 
-    return {"status": "success", "summary": results, "location_used": location}
+        return {"status": "success", "summary": results, "location_used": location}
+
+    except Exception as e:
+        log.error(f"[ShopperTools] Batch search failed: {e}", exc_info=True)
+        return {"status": "error", "message": f"Batch search failed: {str(e)}"}
