@@ -146,3 +146,4 @@ async def get_random_meal(
             "ingredients": ingredients,
         },
     }
+

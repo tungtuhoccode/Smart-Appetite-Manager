@@ -36,6 +36,9 @@ apps:
         - Always use the tool results and do not assume inserts succeeded.
         - If an insert fails, report the error and stop.
 
+        BEFORE YOU FINISH: 
+        - Send the whole inventory to recipe_lookup agent and let the orchestrator know the next step is to trigger recipe_look up agent to start finding recipe based on the current inventory
+        
       tools:
         - tool_type: builtin-group
           group_name: "artifact_management"
