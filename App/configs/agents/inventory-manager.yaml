@@ -1,0 +1,80 @@
+# Plugin Metadata:
+# Name: sam-sql-database
+# Version: 0.1.0
+# Description: A plugin that provides a SQL agent to perform complex queries based on natural language.
+# Author: SolaceLabs <solacelabs@solace.com>
+
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: inventory-manager.log
+
+# Shared SAM config
+!include ../shared_config.yaml
+
+apps:
+  - name: inventory-manager-app
+    app_module: solace_agent_mesh.agent.sac.app 
+    broker:
+      <<: *broker_connection
+    app_config:
+      namespace: "${NAMESPACE, sam/}" # Your A2A topic namespace
+      agent_name: "InventoryManager" 
+      display_name: "Inventory Manager Agent" 
+      supports_streaming: false # SQL agent tools are typically request-response
+
+      model: *general_model 
+      instruction: |
+        You are Inventory Manager agent. You can read and add inventory items
+        using the provided database tools.
+
+        Tool use:
+        - Use list_inventory_items to read current inventory.
+        - Use insert_inventory_items to add new rows.
+
+        IMPORTANT:
+        - Always use the tool results and do not assume inserts succeeded.
+        - If an insert fails, report the error and stop.
+
+      tools:
+        - tool_type: builtin-group
+          group_name: "artifact_management"
+        - tool_type: builtin-group
+          group_name: "data_analysis"
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_manager_tools"
+          function_name: "list_inventory_items"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_manager_tools"
+          function_name: "insert_inventory_items"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+
+      session_service: 
+        type: "sql"
+        database_url: "${INVENTORY_MANAGER_DATABASE_URL, sqlite:///inventory_manager.db}"
+        default_behavior: "PERSISTENT"
+      artifact_service: *default_artifact_service
+
+      # Agent Card, Discovery, and Inter-Agent Communication
+      agent_card:
+        description: "Inventory Manager Agent that reads and inserts inventory items in a configured database."
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text", "file"] # Can output text or files (artifacts)
+        skills:
+          - id: "sql_query"
+            name: "Inventory Read/Write"
+            description: "Reads inventory rows and inserts new inventory items."
+
+      agent_card_publishing:
+        interval_seconds: 30
+
+      agent_discovery:
+        enabled: false
+
+      inter_agent_communication:
+        allow_list: []
