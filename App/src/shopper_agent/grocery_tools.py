@@ -1,147 +1,230 @@
-"""
-Grocery and Flyer tools for the Counter-Intelligence SAM agent.
-
-These tools provide custom Python functions to interact with local Ottawa 
-grocery data, including weekly flyer deals and standard market pricing.
-
-Logging Pattern:
-    SAM tools use Python's standard logging with a module-level logger.
-    Use bracketed identifiers like [ShopperTools:function] for easy filtering.
-    Always use exc_info=True when logging exceptions to capture stack traces.
-"""
-
 import logging
-from typing import Any, Dict, List, Optional
+import httpx
+import asyncio
+from typing import Any, Dict, Optional, List
 
-# Module-level logger configured by SAM
 log = logging.getLogger(__name__)
+
+# List of common grocery chains in Ottawa to prioritize and validate
+OTTAWA_GROCERS = [
+    "metro", "loblaws", "walmart", "real canadian superstore", "farm boy", 
+    "freshco", "food basics", "sobeys", "your independent grocer", "adoni", 
+    "whole foods", "giant tiger", "costco", "t&t"
+]
 
 async def check_local_flyers(
     item_name: str,
-    location: str = "Ottawa",
+    location: str = "Ottawa, Ontario, Canada", 
+    limit: int = 5,
     tool_context: Optional[Any] = None,
     tool_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Search for the best deals in current weekly flyers for a specific item.
-
-    Args:
-        item_name: The name of the grocery item to search for (e.g., "chicken").
-        location: The city or region to filter by (default: "Ottawa").
-
-    Returns:
-        A dictionary containing the best deal found or a message if no deal exists.
-    """
-    log_id = f"[ShopperTools:check_local_flyers:{item_name}]"
-    log.debug(f"{log_id} Searching for deals in {location}")
-
-    try:
-        # Real-world data for Ottawa Flyers (Valid: Jan 15-21, 2026)
-        # In a production environment, this would fetch from a live Scraper/API
-        flyer_database = {
-            "chicken": [
-                {"store": "Metro (Rideau/Glebe)", "price": "$4.88/lb", "detail": "Boneless Skinless Value Pack"},
-                {"store": "No Frills", "price": "$3.99/lb", "detail": "Club Pack Bone-in"},
-                {"store": "Food Basics", "price": "$1.98 ea", "detail": "Fresh Leg Quarters"}
-            ],
-            "bacon": [
-                {"store": "Metro", "price": "$2.99", "detail": "Selection Brand 375g"},
-                {"store": "Giant Tiger", "price": "$3.97", "detail": "Swift Premium - Limit 6"}
-            ],
-            "eggs": [
-                {"store": "Adonis (St. Laurent)", "price": "$7.97", "detail": "30-pack Medium"},
-                {"store": "Independent", "price": "$4.98", "detail": "Lactantia Butter/Eggs Promo"}
-            ],
-            "potatoes": [
-                {"store": "Maxi / Metro", "price": "$1.88", "detail": "10lb bag White Potatoes"},
-                {"store": "Independent", "price": "$3.50", "detail": "10lb bag Russet"}
-            ],
-            "mushrooms": [
-                {"store": "No Frills", "price": "$1.44", "detail": "227g container"},
-                {"store": "Maxi", "price": "$1.88", "detail": "227g container"}
-            ],
-            "beef": [
-                {"store": "Loblaws", "price": "$5.25 ea", "detail": "Grass Fed Lean Ground 450g"},
-                {"store": "Maxi", "price": "$4.88", "detail": "Ground Beef Thawed 450g"}
-            ]
-        }
-
-        query = item_name.lower().strip()
-        found_deals = []
-
-        # Simple keyword matching logic
-        for key, deals in flyer_database.items():
-            if key in query or query in key:
-                found_deals.extend(deals)
-
-        if found_deals:
-            # Sort by price (simple string sort for demo, would be float in prod)
-            best_deal = found_deals[0] 
-            log.info(f"{log_id} Found {len(found_deals)} deals. Top: {best_deal['store']} at {best_deal['price']}")
-            
-            return {
-                "status": "success",
-                "item": item_name,
-                "best_deal": best_deal,
-                "all_deals": found_deals,
-                "valid_until": "2026-01-21"
-            }
-
-        log.info(f"{log_id} No flyer deals found for '{item_name}'")
-        return {
-            "status": "not_found",
-            "message": f"No active flyer deals found for {item_name} in {location} this week."
-        }
-
-    except Exception as e:
-        log.error(f"{log_id} Unexpected error: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
-
-
-async def get_standard_price(
-    item_name: str,
-    tool_context: Optional[Any] = None,
-    tool_config: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """
-    Get the average market price for an item when it is not on sale.
-
-    Args:
-        item_name: The name of the grocery item.
-
-    Returns:
-        A dictionary with estimated pricing based on StatCan 2026 trends.
-    """
-    log_id = f"[ShopperTools:get_standard_price:{item_name}]"
+    """Fetches real-time local grocery deals with strict Ottawa-centric filtering."""
+    log.info(f"[ShopperTools] Checking flyers for: {item_name}")
     
-    # 2026 Forecast: Prices up 4-6% from 2025
-    market_averages = {
-        "milk": {"price": "$5.85", "unit": "4L Bag"},
-        "bread": {"price": "$3.45", "unit": "Loaf"},
-        "butter": {"price": "$7.25", "unit": "454g"},
-        "cheese": {"price": "$6.50", "unit": "400g Brick"},
-        "apples": {"price": "$2.49", "unit": "per lb"}
+    api_key = tool_config.get("serpapi_key") if tool_config else None
+    if not api_key:
+        return {"status": "error", "message": "SerpApi key is missing."}
+
+    # Query specifically for 'flyer' and 'on sale' to trigger local flyer data
+    params = {
+        "engine": "google_shopping",
+        "q": f"{item_name} flyer sale", # Try precise query first
+        "location": location,
+        "gl": "ca",          
+        "hl": "en",          
+        "on_sale": "1",      
+        "num": "20",       
+        "api_key": api_key
     }
 
     try:
-        query = item_name.lower().strip()
-        price_info = market_averages.get(query)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get("https://serpapi.com/search.json", params=params)
+             
+            # If the specific location failed, try falling back
+            if resp.status_code != 200 and location != "Ottawa, Ontario, Canada":
+                 params["location"] = "Ottawa, Ontario, Canada"
+                 resp = await client.get("https://serpapi.com/search.json", params=params)
 
-        if price_info:
-            return {
-                "status": "success",
-                "item": item_name,
-                "estimated_price": price_info["price"],
-                "unit": price_info["unit"],
-                "note": "Based on Jan 2026 StatCan market averages."
-            }
+            resp.raise_for_status()
+            results = resp.json().get("shopping_results", [])
+            
+            # FALLBACK: If strict flyer search yielded nothing, try broad local search
+            if not results:
+                log.info(f"[ShopperTools] No strict flyer deals for {item_name}. Retrying with broad local search...")
+                params["on_sale"] = "0" # Remove sale filter
+                params["q"] = item_name # Remove 'flyer' keyword to get general inventory
+                resp = await client.get("https://serpapi.com/search.json", params=params)
+                resp.raise_for_status()
+                results = resp.json().get("shopping_results", [])
 
-        return {
-            "status": "estimate",
-            "item": item_name,
-            "estimated_price": "$4.00 - $6.00",
-            "note": "General market estimate."
-        }
+        if not results:
+            return {"status": "not_found", "message": f"No sales found for {item_name}."}
+
+        def is_valid_deal(deal):
+            source = deal.get("source", "").lower()
+            title = deal.get("title", "").lower()
+            
+            # 1. Broad online/non-local blocklist
+            blocked_sources = [
+                "alibaba", "aliexpress", "ebay", "etsy", "amazon", "temu", "ubuy", 
+                "wayfair", "spud.ca", "well.ca", "staples", "snapklik", "floral acres",
+                "save-on-foods", "t&t" 
+            ]
+            if any(blocked in source for blocked in blocked_sources):
+                return False
+
+            # 2. Block non-food/specialty keywords
+            blocked_keywords = [
+                "plant", "seed", "tree", "wholesale", "bulk 1000kg", "dried", 
+                "powder", "extract", "artificial", "chocolate covered", "toy"
+            ]
+            if any(keyword in title for keyword in blocked_keywords):
+                return False
+                
+            return True
+
+        deals_found = []
+        for deal in results:
+            if len(deals_found) >= limit: break
+            if is_valid_deal(deal):
+                # CLEANUP: Remove .ca/.com from store names for display
+                raw_store = deal.get("source", "")
+                clean_store = raw_store.replace(".ca", "").replace(".com", "").strip()
+                
+                deals_found.append({
+                    "store": clean_store,
+                    "price": deal.get("price"),
+                    "item": deal.get("title"),
+                    "link": deal.get("product_link"),
+                    "snippet": deal.get("snippet", "") # Pass description to help find Quantity
+                })
+            
+        return {"status": "success", "deals": deals_found}
+
     except Exception as e:
-        log.error(f"{log_id} Error: {e}", exc_info=True)
+        log.error(f"[ShopperTools] API failure: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+async def get_standard_price(
+    item_name: str,
+    location: str = "Ottawa, Ontario, Canada",
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Fetches key injected from YAML for standard price lookup."""
+    log.info(f"[ShopperTools] Checking standard price for: {item_name}")
+    api_key = tool_config.get("serpapi_key") if tool_config else None
+    if not api_key:
+        return {"status": "error", "message": "SerpApi key is missing."}
+
+    # Configure the search parameters (no sale filter)
+    params = {
+        "engine": "google_shopping",
+        "q": f"{item_name} grocery",
+        "location": location,
+        "gl": "ca",
+        "hl": "en",
+        "api_key": api_key
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get("https://serpapi.com/search.json", params=params)
+            resp.raise_for_status()
+            results = resp.json().get("shopping_results", [])
+
+        if not results:
+            return {"status": "not_found", "message": f"No standard price found for {item_name}."}
+
+        # Use the first result as a baseline
+        baseline = results[0]
+        return {
+            "status": "success",
+            "average_price": baseline.get("price"),
+            "item": baseline.get("title"),
+            "source": "Google Shopping Estimate"
+        }
+
+    except Exception as e:
+        log.error(f"[ShopperTools] Standard Price Check failed: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+async def find_nearest_store_address(
+    store_name: str,
+    location: str,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Finds the address and ensures it is actually in Ottawa."""
+    api_key = tool_config.get("serpapi_key") if tool_config else None
+    if not api_key: return None
+    
+    params = {
+        "engine": "google_maps",
+        "q": f"{store_name} near {location}",
+        "type": "search",
+        "api_key": api_key
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get("https://serpapi.com/search.json", params=params)
+            data = resp.json()
+            local_results = data.get("local_results", [])
+            
+            if local_results:
+                address = local_results[0].get("address", "")
+                
+                # RELAXED LOCATION FILTER: Check for Ottawa and surrounding areas
+                accepted_cities = ["ottawa", "nepean", "kanata", "gloucester", "orleans", "vanier", "barrhaven", "stittsville", "gatineau"]
+                address_lower = address.lower()
+                
+                if any(city in address_lower for city in accepted_cities):
+                    return address
+                    
+    except Exception as e:
+        log.warning(f"[ShopperTools] Address lookup failed: {e}")
+    return None
+
+async def find_best_deals_batch(
+    items: List[str],
+    location: str = "Ottawa, Ontario, Canada",
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Orchestrates batch search with strict geographical verification."""
+    results = {}
+    address_cache = {}
+    
+    for item in items:
+        response = await check_local_flyers(item, location, limit=5, tool_config=tool_config)
+        
+        if response.get("status") == "success":
+            enriched_deals = []
+            for deal in response.get("deals", []):
+                store_name = deal.get("store")
+                
+                if store_name in address_cache:
+                    address = address_cache[store_name]
+                else:
+                    address = await find_nearest_store_address(store_name, location, tool_config)
+                    address_cache[store_name] = address
+
+                # ONLY include deals with a verified Ottawa address
+                if address:
+                    enriched_deals.append({
+                        "store": store_name,
+                        "address": address,
+                        "price": deal.get("price"),
+                        "item_title": deal.get("item"),
+                        "link": deal.get("product_link")
+                    })
+
+            if enriched_deals:
+                results[item] = {"found": True, "options": enriched_deals}
+            else:
+                results[item] = {"found": False, "note": "No verified local Ottawa deals found."}
+        else:
+            results[item] = {"found": False, "note": "No flyer deals found."}
+
+    return {"status": "success", "summary": results, "location_used": location}

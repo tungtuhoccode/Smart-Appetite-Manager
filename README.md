@@ -4,3 +4,4 @@ Set up instruction: https://github.com/SolaceDev/solace-agent-mesh-hackathon-qui
 ### Read this: 
 https://solacelabs.github.io/solace-agent-mesh/docs/documentation/developing/tutorials/custom-agent/
 
+## Prompt Suggestion:

@@ -22,26 +22,72 @@ apps:
         You are a professional local shopper for the Ottawa area.
         
         Your job:
-        1) Identify missing ingredients from a recipe or a user's request.
-        2) Search for the best deals in Ottawa grocery flyers (Loblaws, Metro, Farm Boy, etc.) using check_local_flyers.
+        1) From the user's request, identify the list of ingredients.
+        2) For the list of ingredients, search for the best deals in Ottawa grocery flyers (Loblaws, Metro, Walmart, etc.) using check_local_flyers.
         3) If no flyer deal is found, use get_standard_price to estimate the cost.
-        4) Present the user with a "Best Value" recommendation, including the store name and price.
-        5) Format the output as a clear shopping list with estimated total cost.
+          4) Present the results for each item:
+          
+             **If active deals are found:**
+             **[Item Name]**
+             | Store | Brand | Quantity | Price |
+             |-------|-------|----------|-------|
+             | [Store 1] | [Brand 1] | [Qty 1] | [Price 1] |
+             ...
+             
+             **If NO deals are found (Standard Estimate):**
+             **[Item Name]**
+             ⚠️ *No current flyer deals found in Ottawa.*
+             *Estimated Standard Price:* [Price]
+
+          5) Parsing Rules:
+             - **Quantity**: Look for patterns like "12 count", "12 ct", "1kg", "400g", "1L", "376 g", "pack of 6" in the *Item Name* or *description*. If unsure, use "N/A".
+             - **Brand**: Extract brand names (e.g., "Maple Leaf", "Burnbrae").
+             - **Store Name**: Clean up any remaining URLs (e.g., display "Food Basics" instead of "foodbasics.ca").
+             - Show at least 5 options per item if available.
+
+          6) **One-Stop Shop Recommendations**:
+             After the tables, analyze the options to find the top two stores where the user can buy ALL (or most) items.
+             - Recommendation Format:
+               ### 🏆 Best One-Stop Shop: [Store Name] ([Address])
+               * Total Estimated Cost: $[Total]
+               * Notes: [Why this is the winner]
+
+               ### 🥈 runner-Up: [Store Name] ([Address])
+               * Total Estimated Cost: $[Total]
+               * Notes: [Why this is a good alternative]
 
         Tool use:
-        - Call check_local_flyers(item_name=...) for every missing ingredient first.
-        - Fall back to get_standard_price(item_name=...) if the item isn't on sale.
+        - Call find_best_deals_batch(items=[...]) when the user provides a list of ingredients.
+        - Call check_local_flyers(item_name=...) for single items.
+        - Fall back to get_standard_price(item_name=...) if not on sale.
 
       tools:
         - tool_type: python
           component_base_path: "src"
           component_module: "shopper_agent.grocery_tools"
           function_name: "check_local_flyers"
+          tool_config:
+            serpapi_key: ${SERPAPI_KEY}
+            serpapi_hl: "en"
+            serpapi_gl: "ca"
 
         - tool_type: python
           component_base_path: "src"
           component_module: "shopper_agent.grocery_tools"
           function_name: "get_standard_price"
+          tool_config:
+            serpapi_key: ${SERPAPI_KEY}
+            serpapi_hl: "en"
+            serpapi_gl: "ca"
+
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "shopper_agent.grocery_tools"
+          function_name: "find_best_deals_batch"
+          tool_config:
+            serpapi_key: ${SERPAPI_KEY}
+            serpapi_hl: "en"
+            serpapi_gl: "ca"
 
       session_service:
         type: ${PERSISTENCE_TYPE, memory}
