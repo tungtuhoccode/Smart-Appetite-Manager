@@ -22,41 +22,37 @@ apps:
         You are a recipe lookup assistant.
 
         Your job:
-        1) Ask for (or infer) what the user wants: dish name OR ingredient-based search.
-        2) Use tools to look up recipes online (API Ninjas).
-        3) Return 1–3 options, and for the chosen option provide:
-           - Title + cuisine/area + category
-           - Ingredients list (include measures when available)
-           - Short, paraphrased step-by-step directions (do NOT copy long text verbatim)
-           - Helpful links (source / YouTube) if available
-           - A quick “shopping list” summary
+        1) Ask for the user's available ingredients.
+        2) Use the `get_top_3_meals` tool to find the top 3 recipes that best match the user's ingredients. The search results will include a summary of used and missing ingredients for each recipe.
+        3) Present the top 3 meal options to the user, including the used and missing ingredient counts.
+        4) When the user chooses an option, present the detailed lists of "Used Ingredients" and "Missing Ingredients" that you received from the `get_top_3_meals` call for that specific recipe.
+        5) Then, use the `get_meal_details` tool for the selected recipe to fetch and display the full step-by-step cooking instructions.
 
-        Tool use:
-        - If user gives a dish name: call search_meals(query=...)
-        - If user gives ingredients: call search_meals(ingredient=...)
-        - Then call get_meal_details(meal_id=...) for the best match.
+      Tool use: |
+        - When the user provides ingredients, call `get_top_3_meals` with the `ingredients` parameter. For example: `get_top_3_meals(ingredients='chicken,rice')`.
+        - The `get_top_3_meals` tool will return all the information you need about used and missing ingredients. Do not call `get_meal_details` to get this information.
+        - After the user selects a meal, use its ID to get the cooking instructions: `get_meal_details(meal_id=...)`.
 
       tools:
         - tool_type: python
           component_base_path: "src"
           component_module: "recipe_agent.mealdb_tools"
+          function_name: "get_top_3_meals"
+
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "recipe_agent.mealdb_tools"
           function_name: "search_meals"
-          tool_config:
-            api_key: ${API_NINJAS_API_KEY,}
 
         - tool_type: python
           component_base_path: "src"
           component_module: "recipe_agent.mealdb_tools"
           function_name: "get_meal_details"
-          tool_config:
-            api_key: ${API_NINJAS_API_KEY,}
 
         - tool_type: python
           component_base_path: "src"
           component_module: "recipe_agent.mealdb_tools"
           function_name: "get_random_meal"
-          tool_config:
-            api_key: ${API_NINJAS_API_KEY,}
 
       session_service:
         type: ${PERSISTENCE_TYPE, memory}
@@ -66,7 +62,7 @@ apps:
 
       agent_card:
         description: >
-          Looks up recipes online using API Ninjas, then formats ingredients and
+          Looks up recipes online using Spoonacular, then formats ingredients and
           step-by-step cooking directions. Use this agent when the user asks for a
           recipe, meal ideas, or "what can I cook with X".
         defaultInputModes: ["text"]
@@ -74,7 +70,7 @@ apps:
         skills:
           - id: "recipe_search"
             name: "Search recipes"
-            description: "Find recipes by name, ingredient, category, or cuisine."
+            description: "Find recipes by ingredient."
           - id: "recipe_details"
             name: "Get recipe details"
             description: "Fetch full ingredients and instructions for a selected recipe."
