@@ -1,11 +1,3 @@
 # Smart-Appetite-Manager
-Set up instruction: https://github.com/SolaceDev/solace-agent-mesh-hackathon-quickstart/blob/main/docs/deployment/cli.md
 
-### Read this: 
-https://solacelabs.github.io/solace-agent-mesh/docs/documentation/developing/tutorials/custom-agent/
-
-<<<<<<< Updated upstream
-## Prompt Suggestion:
-=======
-### 
->>>>>>> Stashed changes
+Smart Appetite Manager is an AI-powered app designed to eliminate food waste by transforming passive kitchen inventory into active data. Instead of a static "to-do" list, it uses an SAM to check inventory, coordinate between specialized AI agents to suggest recipes, and optimize grocery for best prices shopping in real-time.
