@@ -30,11 +30,14 @@ apps:
 
         Tool use:
         - Use list_inventory_items to read current inventory.
-        - Use insert_inventory_items to add new rows.
+        - Use insert_inventory_items to add items from user input.
+          The tool auto-detects existing items (same product_name + quantity_unit + unit)
+          and increases quantity instead of creating duplicate rows.
+        - Use increase_inventory_stock to explicitly increase stock for an existing item.
 
         IMPORTANT:
         - Always use the tool results and do not assume inserts succeeded.
-        - If any inventory tool call fails (read or insert), you MUST tell the user clearly what failed and include the exact error message from the tool.
+        - If any inventory tool call fails (read, insert, or increase), you MUST tell the user clearly what failed and include the exact error message from the tool.
         - After reporting an inventory error to the user, stop and do not continue with other steps.
 
         BEFORE YOU FINISH: 
@@ -57,6 +60,12 @@ apps:
           function_name: "insert_inventory_items"
           tool_config:
             db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "increase_inventory_stock"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
 
       session_service: 
         type: "sql"
@@ -66,13 +75,13 @@ apps:
 
       # Agent Card, Discovery, and Inter-Agent Communication
       agent_card:
-        description: "Inventory Manager Agent that reads and inserts inventory items in a configured database."
+        description: "Inventory Manager Agent that reads inventory, inserts new items, and increases stock for existing items in a configured database."
         defaultInputModes: ["text"]
         defaultOutputModes: ["text", "file"] # Can output text or files (artifacts)
         skills:
           - id: "sql_query"
             name: "Inventory Read/Write"
-            description: "Reads inventory rows and inserts new inventory items."
+            description: "Reads inventory rows, inserts new items, and increases stock for existing items."
 
       agent_card_publishing:
         interval_seconds: 30
