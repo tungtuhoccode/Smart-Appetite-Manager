@@ -21,7 +21,7 @@ apps:
       namespace: "${NAMESPACE, sam/}" # Your A2A topic namespace
       agent_name: "InventoryManager" 
       display_name: "Inventory Manager Agent" 
-      supports_streaming: false # SQL agent tools are typically request-response
+      supports_streaming: true # SQL agent tools are typically request-response
 
       model: *general_model 
       instruction: |
@@ -34,7 +34,8 @@ apps:
 
         IMPORTANT:
         - Always use the tool results and do not assume inserts succeeded.
-        - If an insert fails, report the error and stop.
+        - If any inventory tool call fails (read or insert), you MUST tell the user clearly what failed and include the exact error message from the tool.
+        - After reporting an inventory error to the user, stop and do not continue with other steps.
 
         BEFORE YOU FINISH: 
         - Send the whole inventory to recipe_lookup agent and let the orchestrator know the next step is to trigger recipe_look up agent to start finding recipe based on the current inventory
@@ -46,13 +47,13 @@ apps:
           group_name: "data_analysis"
         - tool_type: python
           component_base_path: "src"
-          component_module: "inventory_manager_tools"
+          component_module: "inventory_agent.inventory_manager_tools"
           function_name: "list_inventory_items"
           tool_config:
             db_path: ${INVENTORY_MANAGER_DB_NAME}
         - tool_type: python
           component_base_path: "src"
-          component_module: "inventory_manager_tools"
+          component_module: "inventory_agent.inventory_manager_tools"
           function_name: "insert_inventory_items"
           tool_config:
             db_path: ${INVENTORY_MANAGER_DB_NAME}
