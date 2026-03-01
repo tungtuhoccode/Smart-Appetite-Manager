@@ -36,18 +36,9 @@ SERPAPI_KEY=...                # used by shopper agent (App/configs/agents/shopp
 INVENTORY_MANAGER_DB_NAME=inventory.db   # used by inventory agent (App/configs/agents/inventory-manager.yaml:52)
 ```
 
-Initialize the inventory DB once:
-
-```bash
-cd App
-sqlite3 inventory.db "CREATE TABLE IF NOT EXISTS inventory (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_name TEXT NOT NULL,
-  quantity REAL DEFAULT 0,
-  quantity_unit TEXT,
-  unit TEXT
-);"
-```
+Inventory DB bootstrap (automatic):
+No manual SQL step is required. The inventory tool now runs schema bootstrap
+on every call and creates/updates the `inventory` table if needed.
 
 Install dependencies and run:
 
@@ -81,22 +72,11 @@ docker logs -f sam-app
 docker stop sam-app
 ```
 
-## Where To Place the SQL File
-
-No special location is required by the app. Recommended convention:
-
-1. Put the schema file at `App/schema.sql`.
-2. Run from `App/` so relative paths match config:
-
-```bash
-cd App
-sqlite3 inventory.db < schema.sql
-```
-
-3. Keep this in `App/.env`:
+Keep this in `App/.env`:
 
 ```env
 INVENTORY_MANAGER_DB_NAME=inventory.db
 ```
 
-With this setup, the DB file lives at `App/inventory.db` when running locally.
+With this setup, the DB file lives at `App/inventory.db` when running locally,
+and the `inventory` table is created automatically if missing.
