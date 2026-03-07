@@ -21,6 +21,10 @@ __pycache__/
 venv/
 .venv/
 
+# JavaScript
+node_modules/
+dist/
+
 # Logs
 *.log
 logs/

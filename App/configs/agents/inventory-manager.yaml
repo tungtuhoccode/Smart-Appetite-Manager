@@ -78,7 +78,11 @@ apps:
 
       # Agent Card, Discovery, and Inter-Agent Communication
       agent_card:
-        description: "Inventory Manager Agent that reads inventory, inserts new items, and increases stock for existing items in a configured database."
+        description: >
+          Inventory Manager Agent that reads inventory, inserts new items, and
+          increases stock for existing items in a configured database. Use this
+          agent when the user asks to view pantry stock, add inventory items, or
+          increase quantities for existing items.
         defaultInputModes: ["text"]
         defaultOutputModes: ["text", "file"] # Can output text or files (artifacts)
         skills:
@@ -90,7 +94,8 @@ apps:
         interval_seconds: 30
 
       agent_discovery:
-        enabled: false
+        enabled: true
 
       inter_agent_communication:
-        allow_list: []
+        allow_list: ["OrchestratorAgent"]
+        request_timeout_seconds: 60

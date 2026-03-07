@@ -309,6 +309,113 @@ async def increase_inventory_stock(
             pass
 
 
+async def decrease_inventory_stock(
+    product_name: str,
+    quantity_to_remove: float,
+    quantity_unit: Optional[str] = None,
+    unit: Optional[str] = None,
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Decrease stock for an existing item identified by:
+    product_name + quantity_unit + unit.
+    """
+    log_id = "[InventoryTools:decrease_inventory_stock]"
+    db_path = _get_db_path(tool_config)
+    if not db_path:
+        return _error_response("decrease", "Missing db_path in tool_config.")
+
+    normalized_name = _normalize_text(product_name)
+    if not normalized_name:
+        return _error_response("decrease", "Missing product_name.")
+
+    try:
+        quantity_delta = _parse_quantity(quantity_to_remove)
+    except (TypeError, ValueError):
+        return _error_response(
+            "decrease", f"Invalid quantity_to_remove: {quantity_to_remove!r}"
+        )
+
+    if quantity_delta <= 0:
+        return _error_response("decrease", "quantity_to_remove must be greater than 0.")
+
+    normalized_quantity_unit = _normalize_text(quantity_unit)
+    normalized_unit = _normalize_text(unit)
+
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _open_sqlite(db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        existing = _find_existing_inventory_row(
+            cur=cur,
+            product_name=normalized_name,
+            quantity_unit=normalized_quantity_unit,
+            unit=normalized_unit,
+        )
+        if not existing:
+            return _error_response(
+                "decrease",
+                (
+                    "Item does not exist. Use insert_inventory_items to add it first. "
+                    f"Lookup key: product_name='{normalized_name}', "
+                    f"quantity_unit='{normalized_quantity_unit}', unit='{normalized_unit}'."
+                ),
+            )
+
+        current_quantity = _parse_quantity(existing["quantity"], default=0.0)
+        if quantity_delta > current_quantity:
+            return _error_response(
+                "decrease",
+                (
+                    f"Cannot remove {quantity_delta}. Available quantity is "
+                    f"{current_quantity}."
+                ),
+            )
+
+        new_quantity = current_quantity - quantity_delta
+        cur.execute(
+            """
+            UPDATE inventory
+            SET quantity = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (new_quantity, existing["id"]),
+        )
+        conn.commit()
+
+        log.info(
+            f"{log_id} Decreased id={existing['id']} by {quantity_delta}. New quantity={new_quantity}"
+        )
+        return {
+            "status": "success",
+            "updated": 1,
+            "item": {
+                "id": existing["id"],
+                "product_name": existing["product_name"],
+                "quantity_unit": existing["quantity_unit"],
+                "unit": existing["unit"],
+                "previous_quantity": current_quantity,
+                "quantity_removed": quantity_delta,
+                "new_quantity": new_quantity,
+            },
+        }
+    except sqlite3.Error as e:
+        log.error(f"{log_id} SQLite error: {e}", exc_info=True)
+        return _error_response("decrease", f"SQLite error: {e}")
+    except Exception as e:
+        log.error(f"{log_id} Unexpected error: {e}", exc_info=True)
+        return _error_response("decrease", f"Unexpected error: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 async def list_inventory_items(
     limit: int = 100,
     tool_context: Optional[Any] = None,
