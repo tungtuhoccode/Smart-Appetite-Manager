@@ -141,6 +141,8 @@ uv run sam run configs/
 
 ## Team
 
+- Tung Tran 
+- Vu Nguyen
 - Quynh Vo
 - BaoVoHoang Vo
 

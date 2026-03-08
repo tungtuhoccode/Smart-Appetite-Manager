@@ -3,12 +3,15 @@ import { Button } from "@/components/ui/button";
 import { XIcon, SendIcon, MicIcon, MicOffIcon, ChefHatIcon } from "lucide-react";
 
 function AssistantAvatar({ size = "sm" }) {
-  const sizeClass = size === "lg" ? "w-16 h-16" : "w-7 h-7";
+  const sizeClass =
+    size === "lg" ? "w-16 h-16" : size === "md" ? "w-10 h-10" : "w-7 h-7";
+  const iconClass =
+    size === "lg" ? "w-8 h-8 text-white" : size === "md" ? "w-5 h-5 text-white" : "w-4 h-4 text-white";
   return (
     <div
       className={`${sizeClass} rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shrink-0 shadow-md`}
     >
-      <ChefHatIcon className={size === "lg" ? "w-8 h-8 text-white" : "w-4 h-4 text-white"} />
+      <ChefHatIcon className={iconClass} />
     </div>
   );
 }
@@ -103,7 +106,7 @@ export function AssistantPanel({
       {/* Subtle overlay - clickable to close, no blur */}
       {open && (
         <div
-          className="fixed inset-0 z-40 bg-black/5 transition-opacity duration-200"
+          className="fixed inset-0 z-40 bg-black/5 transition-opacity duration-200 sm:hidden"
           onClick={onClose}
         />
       )}
@@ -115,13 +118,13 @@ export function AssistantPanel({
         }`}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b bg-gradient-to-r from-amber-50 to-orange-50">
-          <AssistantAvatar size="lg" />
+        <div className="flex h-14 items-center gap-3 px-4 border-b bg-gradient-to-r from-amber-50 to-orange-50">
+          <AssistantAvatar size="md" />
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-foreground">
+            <h2 className="text-sm font-semibold text-foreground leading-tight">
               Kitchen Assistant
             </h2>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground leading-tight truncate">
               I can help manage your inventory. Just ask!
             </p>
           </div>

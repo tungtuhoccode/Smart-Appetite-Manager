@@ -122,6 +122,19 @@ export default function InventoryPage() {
   }, [client]);
 
   useEffect(() => {
+    const className = "inventory-chat-open";
+    if (chatOpen) {
+      document.body.classList.add(className);
+    } else {
+      document.body.classList.remove(className);
+    }
+
+    return () => {
+      document.body.classList.remove(className);
+    };
+  }, [chatOpen]);
+
+  useEffect(() => {
     void fetchItems();
     const intervalId = window.setInterval(() => {
       void fetchItems({ background: true });
