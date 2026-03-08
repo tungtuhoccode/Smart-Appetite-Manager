@@ -8,6 +8,11 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+try:
+    from tool_execution_logger import logged_tool
+except ImportError:  # pragma: no cover
+    from src.tool_execution_logger import logged_tool
+
 log = logging.getLogger(__name__)
 
 _SKIP_KEYWORDS = (
@@ -92,6 +97,7 @@ def _extract_pack_unit(line: str) -> Optional[str]:
     return None
 
 
+@logged_tool("receipt.parse_receipt_text")
 async def parse_receipt_text(
     text: str,
     tool_context: Optional[Any] = None,

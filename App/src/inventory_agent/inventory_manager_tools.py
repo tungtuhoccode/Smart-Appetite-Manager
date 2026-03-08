@@ -10,6 +10,11 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    from tool_execution_logger import logged_tool
+except ImportError:  # pragma: no cover
+    from src.tool_execution_logger import logged_tool
+
 log = logging.getLogger(__name__)
 
 
@@ -295,6 +300,7 @@ def _find_existing_inventory_row_with_fallback(
     return None, None
 
 
+@logged_tool("inventory.insert_inventory_items")
 async def insert_inventory_items(
     items: List[Dict[str, Any]],
     tool_context: Optional[Any] = None,
@@ -402,6 +408,7 @@ async def insert_inventory_items(
             pass
 
 
+@logged_tool("inventory.increase_inventory_stock")
 async def increase_inventory_stock(
     product_name: str,
     quantity_to_add: float,
@@ -500,6 +507,7 @@ async def increase_inventory_stock(
             pass
 
 
+@logged_tool("inventory.decrease_inventory_stock")
 async def decrease_inventory_stock(
     product_name: str,
     quantity_to_remove: float,
@@ -609,6 +617,7 @@ async def decrease_inventory_stock(
             pass
 
 
+@logged_tool("inventory.delete_inventory_item")
 async def delete_inventory_item(
     product_name: str,
     quantity_unit: Optional[str] = None,
@@ -684,6 +693,7 @@ async def delete_inventory_item(
             pass
 
 
+@logged_tool("inventory.list_inventory_items")
 async def list_inventory_items(
     limit: int = 100,
     tool_context: Optional[Any] = None,

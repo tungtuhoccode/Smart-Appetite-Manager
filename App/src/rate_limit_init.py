@@ -19,11 +19,30 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+_STARTUP_CHECK_LOCK = threading.Lock()
+_STARTUP_CHECK_RAN = False
 
 
 @dataclass
 class RateLimitConfig:
     wait_seconds: float = 1.0
+
+
+def _run_startup_health_checks_once() -> None:
+    global _STARTUP_CHECK_RAN
+    with _STARTUP_CHECK_LOCK:
+        if _STARTUP_CHECK_RAN:
+            return
+        _STARTUP_CHECK_RAN = True
+
+    try:
+        try:
+            from startup_healthcheck import run_startup_health_checks
+        except ImportError:  # pragma: no cover
+            from src.startup_healthcheck import run_startup_health_checks
+        run_startup_health_checks(logger=log)
+    except Exception as e:  # pragma: no cover
+        log.warning("[StartupCheck] Health check bootstrap failed: %s", e, exc_info=True)
 
 
 def setup_llm_rate_limit(host_component: Any, config: Optional[Any] = None) -> None:
@@ -32,6 +51,8 @@ def setup_llm_rate_limit(host_component: Any, config: Optional[Any] = None) -> N
 
     The limiter is process-local to this agent instance and thread-safe.
     """
+    _run_startup_health_checks_once()
+
     raw_wait = getattr(config, "wait_seconds", None)
     if raw_wait is None and isinstance(config, dict):
         raw_wait = config.get("wait_seconds")
@@ -65,4 +86,3 @@ def setup_llm_rate_limit(host_component: Any, config: Optional[Any] = None) -> N
         log_id,
         wait_seconds,
     )
-

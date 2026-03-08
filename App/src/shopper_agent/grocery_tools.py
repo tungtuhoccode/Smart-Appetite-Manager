@@ -7,6 +7,11 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk import trace, set_tag
 from typing import Any, Dict, Optional, List
 
+try:
+    from tool_execution_logger import logged_tool
+except ImportError:  # pragma: no cover
+    from src.tool_execution_logger import logged_tool
+
 log = logging.getLogger(__name__)
 
 # Initialize Sentry if DSN is present
@@ -55,6 +60,7 @@ def safe_set_tag(key: str, value: Any):
     except Exception:
         pass
 
+@logged_tool("shopper.check_local_flyers")
 @trace
 async def check_local_flyers(
     item_name: str,
@@ -153,6 +159,7 @@ async def check_local_flyers(
         log.error(f"[ShopperTools] API failure: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
+@logged_tool("shopper.get_standard_price")
 @trace
 async def get_standard_price(
     item_name: str,
@@ -199,6 +206,7 @@ async def get_standard_price(
         log.error(f"[ShopperTools] Standard Price Check failed: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
+@logged_tool("shopper.find_nearest_store_address")
 @trace
 async def find_nearest_store_address(
     store_name: str,
@@ -238,6 +246,7 @@ async def find_nearest_store_address(
         log.warning(f"[ShopperTools] Address lookup failed: {e}")
     return None
 
+@logged_tool("shopper.find_best_deals_batch")
 @trace
 async def find_best_deals_batch(
     items: List[str],

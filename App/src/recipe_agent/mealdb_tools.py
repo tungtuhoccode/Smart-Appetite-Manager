@@ -4,42 +4,93 @@ import asyncio
 import json
 import os
 import random
+import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from google.adk.tools import ToolContext
 from dotenv import load_dotenv
+try:
+    from tool_execution_logger import logged_tool
+except ImportError:  # pragma: no cover
+    from src.tool_execution_logger import logged_tool
 
-load_dotenv()
+_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(dotenv_path=_ENV_PATH)
+else:
+    load_dotenv()
 
 SPOONACULAR_BASE = "https://api.spoonacular.com"
-API_KEY = os.environ.get("SPOONACULAR_API_KEY")
+
+
+class SpoonacularError(RuntimeError):
+    """Raised when Spoonacular request setup/call fails."""
+
+
+def _get_api_key() -> str:
+    key = (os.environ.get("SPOONACULAR_API_KEY") or "").strip()
+    if not key:
+        raise SpoonacularError(
+            "SPOONACULAR_API_KEY is missing. Set it in App/.env and restart SAM."
+        )
+    return key
 
 
 async def _fetch_json(url: str) -> Any:
     def _blocking() -> Any:
         req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            snippet = body[:500] if body else ""
+            raise SpoonacularError(
+                f"Spoonacular HTTP {e.code}. {snippet or 'No response body.'}"
+            ) from e
+        except urllib.error.URLError as e:
+            reason = getattr(e, "reason", e)
+            raise SpoonacularError(
+                f"Network error calling Spoonacular: {reason}"
+            ) from e
+        except json.JSONDecodeError as e:
+            raise SpoonacularError(
+                f"Invalid JSON from Spoonacular: {e}"
+            ) from e
     return await asyncio.to_thread(_blocking)
 
 
+@logged_tool("recipe.get_top_3_meals")
 async def get_top_3_meals(ingredients: str) -> Dict[str, Any]:
     """
     Get the top 3 meals with the most used ingredients from Spoonacular.
     """
+    try:
+        api_key = _get_api_key()
+    except SpoonacularError as e:
+        return {"status": "error", "message": str(e)}
+
     params = {
-        "apiKey": API_KEY,
+        "apiKey": api_key,
         "ingredients": ingredients,
         "number": 10,  # Fetch more to sort and get top 3
         "ranking": 1,  # Maximize used ingredients
-        "ignorePantry": True,
+        "ignorePantry": "true",
     }
     encoded_params = urllib.parse.urlencode(params)
     url = f"{SPOONACULAR_BASE}/recipes/findByIngredients?{encoded_params}"
 
-    data = await _fetch_json(url)
+    try:
+        data = await _fetch_json(url)
+    except SpoonacularError as e:
+        return {"status": "error", "message": str(e)}
     if not isinstance(data, list):
         return {"status": "error", "message": "Unexpected Spoonacular API response"}
 
@@ -67,6 +118,7 @@ async def get_top_3_meals(ingredients: str) -> Dict[str, Any]:
     return {"status": "success", "count": len(results), "meals": results}
 
 
+@logged_tool("recipe.search_meals")
 async def search_meals(
     ingredient: Optional[str] = None,
     category: Optional[str] = None,  # Corresponds to diet in Spoonacular
@@ -83,6 +135,7 @@ async def search_meals(
     return await get_top_3_meals(ingredient)
 
 
+@logged_tool("recipe.get_meal_details")
 async def get_meal_details(
     meal_id: str,
     tool_context: Optional[ToolContext] = None,
@@ -93,11 +146,19 @@ async def get_meal_details(
     if not meal_id:
         return {"status": "error", "message": "meal_id is required"}
 
-    params = {"apiKey": API_KEY}
+    try:
+        api_key = _get_api_key()
+    except SpoonacularError as e:
+        return {"status": "error", "message": str(e)}
+
+    params = {"apiKey": api_key}
     encoded_params = urllib.parse.urlencode(params)
     url = f"{SPOONACULAR_BASE}/recipes/{meal_id}/information?{encoded_params}"
 
-    data = await _fetch_json(url)
+    try:
+        data = await _fetch_json(url)
+    except SpoonacularError as e:
+        return {"status": "error", "message": str(e)}
     if not isinstance(data, dict) or not data:
         return {"status": "error", "message": f"No meal found for id={meal_id}"}
 
@@ -115,6 +176,7 @@ async def get_meal_details(
     }
 
 
+@logged_tool("recipe.get_random_meal")
 async def get_random_meal(
     tool_context: Optional[ToolContext] = None,
 ) -> Dict[str, Any]:
@@ -122,14 +184,22 @@ async def get_random_meal(
 
     Get a random meal recipe online using Spoonacular.
     """
+    try:
+        api_key = _get_api_key()
+    except SpoonacularError as e:
+        return {"status": "error", "message": str(e)}
+
     params = {
-        "apiKey": API_KEY,
+        "apiKey": api_key,
         "number": 1,
     }
     encoded_params = urllib.parse.urlencode(params)
     url = f"{SPOONACULAR_BASE}/recipes/random?{encoded_params}"
 
-    data = await _fetch_json(url)
+    try:
+        data = await _fetch_json(url)
+    except SpoonacularError as e:
+        return {"status": "error", "message": str(e)}
     if not isinstance(data, dict) or "recipes" not in data or not data["recipes"]:
         return {"status": "error", "message": "No random meal returned from Spoonacular"}
 
@@ -146,4 +216,3 @@ async def get_random_meal(
             "ingredients": ingredients,
         },
     }
-
