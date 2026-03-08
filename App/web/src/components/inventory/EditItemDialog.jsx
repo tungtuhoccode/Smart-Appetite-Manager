@@ -30,13 +30,13 @@ export function EditItemDialog({
 
   const handleIncrease = () => {
     if (!isValid) return;
-    onIncrease(item.product_name, parsedAmount, unit);
+    onIncrease(item, parsedAmount);
     setAmount("");
   };
 
   const handleDecrease = () => {
     if (!isValid) return;
-    onDecrease(item.product_name, parsedAmount, unit);
+    onDecrease(item, parsedAmount);
     setAmount("");
   };
 

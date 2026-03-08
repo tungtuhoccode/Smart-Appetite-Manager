@@ -6,8 +6,9 @@ Provides basic read/insert operations against a SQLite inventory database.
 
 import logging
 import os
+import re
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +90,97 @@ def _parse_quantity(value: Any, default: float = 0.0) -> float:
     return float(value)
 
 
+def _first_non_empty(item: Dict[str, Any], keys: List[str]) -> Optional[Any]:
+    for key in keys:
+        if key in item and item.get(key) is not None:
+            value = item.get(key)
+            if isinstance(value, str):
+                if value.strip():
+                    return value
+                continue
+            return value
+    return None
+
+
+def _canonicalize_unit_token(value: Optional[str]) -> Optional[str]:
+    token = _normalize_text(value)
+    if not token:
+        return None
+    lower = token.lower()
+    aliases = {
+        "kilogram": "kg",
+        "kilograms": "kg",
+        "gram": "g",
+        "grams": "g",
+        "liter": "L",
+        "liters": "L",
+        "litre": "L",
+        "litres": "L",
+        "milliliter": "ml",
+        "milliliters": "ml",
+        "millilitre": "ml",
+        "millilitres": "ml",
+        "piece": "unit",
+        "pieces": "unit",
+        "pcs": "unit",
+        "pc": "unit",
+        "each": "unit",
+        "ea": "unit",
+        "units": "unit",
+    }
+    return aliases.get(lower, token)
+
+
+def _normalize_insert_item(item: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    if not isinstance(item, dict):
+        return None, f"Expected object item, got {type(item).__name__}."
+
+    product_name = _normalize_text(
+        _first_non_empty(item, ["product_name", "product", "name", "item_name", "item"])
+    )
+    if not product_name:
+        return None, "Missing product_name (or alias: product/name/item_name/item)."
+
+    quantity_raw = _first_non_empty(item, ["quantity", "qty", "amount", "count"])
+    quantity_unit_raw = _first_non_empty(
+        item, ["quantity_unit", "quantityUnit", "uom", "measure", "measurement"]
+    )
+    unit_raw = _first_non_empty(item, ["unit", "package", "packaging"])
+
+    quantity_unit = _canonicalize_unit_token(_normalize_text(quantity_unit_raw))
+    unit = _canonicalize_unit_token(_normalize_text(unit_raw))
+
+    # Support formats like "1kg", "1 kg", "250g" in quantity field.
+    if isinstance(quantity_raw, str):
+        stripped = quantity_raw.strip()
+        unit_match = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*([A-Za-z]+)\s*$", stripped)
+        if unit_match:
+            quantity_raw = unit_match.group(1)
+            inline_unit = _canonicalize_unit_token(unit_match.group(2))
+            if inline_unit and not quantity_unit:
+                quantity_unit = inline_unit
+            if inline_unit and not unit:
+                unit = inline_unit
+
+    try:
+        quantity = _parse_quantity(quantity_raw, default=0.0)
+    except (TypeError, ValueError):
+        return None, f"Invalid quantity value: {quantity_raw!r}."
+
+    # If only one unit field is provided, mirror it to both fields for stable matching.
+    if quantity_unit and not unit:
+        unit = quantity_unit
+    if unit and not quantity_unit:
+        quantity_unit = unit
+
+    return {
+        "product_name": product_name,
+        "quantity": quantity,
+        "quantity_unit": quantity_unit,
+        "unit": unit,
+    }, None
+
+
 def _find_existing_inventory_row(
     cur: sqlite3.Cursor,
     product_name: str,
@@ -108,6 +200,99 @@ def _find_existing_inventory_row(
         (product_name, quantity_unit, unit),
     )
     return cur.fetchone()
+
+
+def _normalize_unit_token(value: Any) -> Optional[str]:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return None
+    return normalized.lower()
+
+
+def _find_existing_inventory_row_with_fallback(
+    cur: sqlite3.Cursor,
+    product_name: str,
+    quantity_unit: Optional[str],
+    unit: Optional[str],
+) -> Tuple[Optional[sqlite3.Row], Optional[str]]:
+    """
+    Resolve an inventory row using exact matching first, then a safe fallback.
+
+    Fallback behavior:
+    - If exact lookup fails, search by product_name.
+    - If unit tokens are provided, match candidates where those tokens appear in
+      either quantity_unit or unit (to tolerate historical mixed column usage).
+    - If no unit tokens are provided, only auto-match when product_name is unique.
+    - Return an explicit ambiguity message when multiple candidates remain.
+    """
+    existing = _find_existing_inventory_row(
+        cur=cur,
+        product_name=product_name,
+        quantity_unit=quantity_unit,
+        unit=unit,
+    )
+    if existing:
+        return existing, None
+
+    cur.execute(
+        """
+        SELECT id, product_name, quantity, quantity_unit, unit, created_at, updated_at
+        FROM inventory
+        WHERE lower(trim(product_name)) = lower(trim(?))
+        ORDER BY id DESC
+        LIMIT 50
+        """,
+        (product_name,),
+    )
+    candidates = cur.fetchall()
+    if not candidates:
+        return None, None
+
+    requested_tokens = {
+        token
+        for token in (
+            _normalize_unit_token(quantity_unit),
+            _normalize_unit_token(unit),
+        )
+        if token
+    }
+
+    if not requested_tokens:
+        if len(candidates) == 1:
+            return candidates[0], None
+        return (
+            None,
+            (
+                f"Ambiguous item lookup for product_name='{product_name}'. "
+                "Multiple rows exist; please specify quantity_unit and/or unit."
+            ),
+        )
+
+    matched_rows: List[sqlite3.Row] = []
+    for row in candidates:
+        row_tokens = {
+            token
+            for token in (
+                _normalize_unit_token(row["quantity_unit"]),
+                _normalize_unit_token(row["unit"]),
+            )
+            if token
+        }
+        if requested_tokens.issubset(row_tokens):
+            matched_rows.append(row)
+
+    if len(matched_rows) == 1:
+        return matched_rows[0], None
+    if len(matched_rows) > 1:
+        tokens = ", ".join(sorted(requested_tokens))
+        return (
+            None,
+            (
+                f"Ambiguous item lookup for product_name='{product_name}' and units '{tokens}'. "
+                "Multiple rows match; please specify both quantity_unit and unit."
+            ),
+        )
+    return None, None
 
 
 async def insert_inventory_items(
@@ -139,23 +324,19 @@ async def insert_inventory_items(
         inserted = 0
         increased = 0
         skipped = 0
+        skipped_details: List[str] = []
 
-        for item in items:
-            product_name = _normalize_text(item.get("product_name"))
-            if not product_name:
+        for idx, raw_item in enumerate(items):
+            normalized_item, normalize_error = _normalize_insert_item(raw_item)
+            if normalize_error:
                 skipped += 1
+                skipped_details.append(f"index={idx}: {normalize_error}")
                 continue
 
-            try:
-                quantity = _parse_quantity(item.get("quantity", 0), default=0.0)
-            except (TypeError, ValueError):
-                return _error_response(
-                    "insert",
-                    f"Invalid quantity for '{product_name}': {item.get('quantity')!r}",
-                )
-
-            quantity_unit = _normalize_text(item.get("quantity_unit"))
-            unit = _normalize_text(item.get("unit"))
+            product_name = normalized_item["product_name"]
+            quantity = normalized_item["quantity"]
+            quantity_unit = normalized_item["quantity_unit"]
+            unit = normalized_item["unit"]
 
             existing = _find_existing_inventory_row(
                 cur=cur,
@@ -189,6 +370,13 @@ async def insert_inventory_items(
             )
             inserted += 1
 
+        if inserted == 0 and increased == 0:
+            details = "; ".join(skipped_details[:8]) if skipped_details else "No valid items."
+            return _error_response(
+                "insert",
+                f"No valid items to insert. {details}",
+            )
+
         conn.commit()
         log.info(
             f"{log_id} Inserted {inserted}, increased {increased}, skipped {skipped}"
@@ -199,6 +387,7 @@ async def insert_inventory_items(
             "increased": increased,
             "skipped": skipped,
             "processed": len(items),
+            "skipped_details": skipped_details[:20],
         }
     except sqlite3.Error as e:
         log.error(f"{log_id} SQLite error: {e}", exc_info=True)
@@ -251,12 +440,14 @@ async def increase_inventory_stock(
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
-        existing = _find_existing_inventory_row(
+        existing, lookup_error = _find_existing_inventory_row_with_fallback(
             cur=cur,
             product_name=normalized_name,
             quantity_unit=normalized_quantity_unit,
             unit=normalized_unit,
         )
+        if lookup_error:
+            return _error_response("increase", lookup_error)
         if not existing:
             return _error_response(
                 "increase",
@@ -349,12 +540,14 @@ async def decrease_inventory_stock(
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
-        existing = _find_existing_inventory_row(
+        existing, lookup_error = _find_existing_inventory_row_with_fallback(
             cur=cur,
             product_name=normalized_name,
             quantity_unit=normalized_quantity_unit,
             unit=normalized_unit,
         )
+        if lookup_error:
+            return _error_response("decrease", lookup_error)
         if not existing:
             return _error_response(
                 "decrease",
@@ -445,12 +638,14 @@ async def delete_inventory_item(
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
-        existing = _find_existing_inventory_row(
+        existing, lookup_error = _find_existing_inventory_row_with_fallback(
             cur=cur,
             product_name=normalized_name,
             quantity_unit=normalized_quantity_unit,
             unit=normalized_unit,
         )
+        if lookup_error:
+            return _error_response("delete", lookup_error)
         if not existing:
             return _error_response(
                 "delete",

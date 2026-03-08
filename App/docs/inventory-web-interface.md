@@ -1,24 +1,34 @@
-# Inventory Web Interface (SAM Gateway)
+# Inventory Web Interface (REST API)
 
-This project now includes a React-based inventory web client:
+This project includes a React-based inventory web client:
 
 - `web/` (Vite + React app source)
 
 It uses this flow:
 
-`Web UI -> SAM HTTP SSE Gateway -> InventoryManager agent -> inventory SQLite DB`
+`Web UI (list) -> Inventory REST API -> SQLite inventory DB`
+
+`Web UI (add/update/delete) -> SAM Gateway -> InventoryManager agent -> SQLite inventory DB`
 
 ## Prerequisites
 
-1. Start SAM from `App/`:
+1. Start SAM gateway from `App/`:
 
 ```bash
 uv run sam run configs/
 ```
 
-2. Confirm gateway is up:
+2. Start the inventory REST API from `App/`:
+
+```bash
+./.venv/bin/python -m uvicorn src.inventory_api.app:app --host 0.0.0.0 --port 8001 --reload
+```
+
+3. Confirm services are up:
 
 - `http://localhost:8000/health`
+
+- `http://localhost:8001/health`
 
 ## Use the Web Interface
 
@@ -26,6 +36,8 @@ From `App/web`:
 
 ```bash
 npm install
+# Optional if API is not on default port:
+# echo "VITE_INVENTORY_API_URL=http://localhost:8001" > .env.local
 npm run dev
 ```
 
@@ -47,34 +59,19 @@ Then open:
 - `http://localhost:4173`
 - (compat URL) `http://localhost:4173/inventory-gateway-ui.html`
 
-> If you enable gateway auth, serve this UI from the same origin as the gateway
-> or add an authenticated backend proxy.
+> If you deploy the API separately, configure CORS via `INVENTORY_API_ALLOWED_ORIGINS`.
 
-## Gateway/API Contract Used
+## REST API Contract Used (Read-Only)
 
-The page calls:
+The page calls this endpoint for inventory refresh:
 
-1. `POST /api/v1/message:stream`
-- JSON-RPC payload with:
-  - `method: "message/stream"`
-  - `params.message.metadata.agent_name` (`InventoryManager` or `OrchestratorAgent`)
-  - `params.message.contextId` for session continuity
+1. `GET /api/inventory/items?limit=200`
 
-2. `GET /api/v1/sse/subscribe/{taskId}`
-- Listens to:
-  - `status_update`
-  - `artifact_update`
-  - `final_response`
+No token is required by default.
 
-## Recommended Agent Selection
+## Note About Agents
 
-- Use `InventoryManager` for direct inventory operations.
-- Use `OrchestratorAgent` if you want orchestration/delegation behavior.
-
-## Inventory Routing Enablement
-
-Inventory agent config now supports orchestration/discovery:
-
-- `configs/agents/inventory-manager.yaml`
-  - `agent_discovery.enabled: true`
-  - `inter_agent_communication.allow_list: ["OrchestratorAgent"]`
+The chat page (`/`) uses SAM agents.  
+The inventory page (`/inventory`) uses:
+- REST API for `GET` inventory list.
+- SAM `InventoryManager` for add/update/delete actions.

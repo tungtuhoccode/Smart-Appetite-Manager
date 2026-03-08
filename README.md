@@ -49,10 +49,16 @@ uv run sam run configs/
 
 Open: `http://localhost:8000`
 
-Inventory web interface (custom page backed by SAM Gateway):
+Inventory web interface (custom page with REST read + SAM write):
 
 - Open `App/web/inventory-gateway-ui.html`
 - Full guide: `App/docs/inventory-web-interface.md`
+- Start inventory API first:
+
+```bash
+cd App
+./.venv/bin/python -m uvicorn src.inventory_api.app:app --host 0.0.0.0 --port 8001 --reload
+```
 
 If `uv` is missing on macOS:
 

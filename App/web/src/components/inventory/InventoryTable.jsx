@@ -11,7 +11,21 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export function InventoryTable({ items, loading, onEdit, onDelete }) {
+function formatUpdatedAt(value) {
+  if (!value) return "—";
+  const parsed = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString();
+}
+
+export function InventoryTable({
+  items,
+  loading,
+  onEdit,
+  onDelete,
+  sortDirection = "desc",
+  onToggleSort,
+}) {
   if (loading && items.length === 0) {
     return (
       <div className="space-y-3">
@@ -45,6 +59,16 @@ export function InventoryTable({ items, loading, onEdit, onDelete }) {
             <TableHead className="text-right">Quantity</TableHead>
             <TableHead>Unit</TableHead>
             <TableHead>Package</TableHead>
+            <TableHead>
+              <button
+                type="button"
+                className="font-medium text-left hover:underline cursor-pointer"
+                onClick={onToggleSort}
+                title="Sort by last updated"
+              >
+                Last Updated {sortDirection === "desc" ? "↓" : "↑"}
+              </button>
+            </TableHead>
             <TableHead className="text-right w-[120px]">Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -70,6 +94,9 @@ export function InventoryTable({ items, loading, onEdit, onDelete }) {
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {item.unit || "—"}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {formatUpdatedAt(item.updated_at || item.created_at)}
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">

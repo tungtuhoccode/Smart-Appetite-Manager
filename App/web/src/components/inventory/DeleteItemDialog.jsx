@@ -29,7 +29,7 @@ export function DeleteItemDialog({ item, open, onOpenChange, onConfirm, loading 
         <AlertDialogFooter>
           <AlertDialogCancel disabled={loading}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            onClick={() => onConfirm(item.product_name)}
+            onClick={() => onConfirm(item)}
             disabled={loading}
             className="bg-destructive text-white hover:bg-destructive/90"
           >
