@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, Optional
 
 _WRITE_LOCK = threading.Lock()
 _BASE_DIR = Path(__file__).resolve().parents[1]
-_DEFAULT_LOG_PATH = _BASE_DIR / "log.jsonl"
+_DEFAULT_LOG_PATH = _BASE_DIR / "monitoring" / "log.jsonl"
 _SENSITIVE_TOKENS = ("key", "token", "secret", "password", "authorization")
 
 

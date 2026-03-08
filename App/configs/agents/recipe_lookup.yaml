@@ -88,5 +88,5 @@ apps:
         enabled: true
 
       inter_agent_communication:
-        allow_list: ["OrchestratorAgent"]
+        allow_list: ["OrchestratorAgent", "RecipeResearchAgent"]
         request_timeout_seconds: 60

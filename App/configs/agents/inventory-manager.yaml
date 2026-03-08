@@ -66,6 +66,12 @@ apps:
         - tool_type: python
           component_base_path: "src"
           component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "get_ingredient_names"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
           function_name: "list_inventory_items"
           tool_config:
             db_path: ${INVENTORY_MANAGER_DB_NAME}
@@ -107,6 +113,7 @@ apps:
           increases or decreases stock, and deletes items in a configured database.
           Use this agent when the user asks to view pantry stock, add inventory items,
           increase or decrease quantities, or remove items from inventory.
+          Also supports recipe planning by providing ingredient names from inventory.
         defaultInputModes: ["text"]
         defaultOutputModes: ["text", "file"] # Can output text or files (artifacts)
         skills:
@@ -121,5 +128,5 @@ apps:
         enabled: true
 
       inter_agent_communication:
-        allow_list: ["OrchestratorAgent"]
+        allow_list: ["OrchestratorAgent", "RecipeResearchAgent"]
         request_timeout_seconds: 60

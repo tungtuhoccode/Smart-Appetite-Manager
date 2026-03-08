@@ -36,6 +36,18 @@ export default function Layout() {
             >
               Inventory
             </NavLink>
+            <NavLink
+              to="/recipes"
+              className={({ isActive }) =>
+                `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                }`
+              }
+            >
+              Recipes
+            </NavLink>
           </div>
         </div>
       </nav>

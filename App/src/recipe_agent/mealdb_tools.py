@@ -10,7 +10,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from google.adk.tools import ToolContext
 from dotenv import load_dotenv
 try:
     from tool_execution_logger import logged_tool
@@ -41,7 +40,7 @@ def _get_api_key() -> str:
 
 async def _fetch_json(url: str) -> Any:
     def _blocking() -> Any:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, headers={"User-Agent": "SmartAppetiteManager/1.0"})
         try:
             with urllib.request.urlopen(req, timeout=20) as resp:
                 return json.loads(resp.read().decode("utf-8"))
@@ -123,7 +122,7 @@ async def search_meals(
     ingredient: Optional[str] = None,
     category: Optional[str] = None,  # Corresponds to diet in Spoonacular
     area: Optional[str] = None,  # Corresponds to cuisine in Spoonacular
-    tool_context: Optional[ToolContext] = None,
+    tool_context: Any = None,
 ) -> Dict[str, Any]:
     """
     Search for meals online using the Spoonacular API based on ingredients, diet, and cuisine.
@@ -138,7 +137,7 @@ async def search_meals(
 @logged_tool("recipe.get_meal_details")
 async def get_meal_details(
     meal_id: str,
-    tool_context: Optional[ToolContext] = None,
+    tool_context: Any = None,
 ) -> Dict[str, Any]:
     """
     Lookup full meal details by ID (ingredients + instructions) using Spoonacular.
@@ -178,7 +177,7 @@ async def get_meal_details(
 
 @logged_tool("recipe.get_random_meal")
 async def get_random_meal(
-    tool_context: Optional[ToolContext] = None,
+    tool_context: Any = None,
 ) -> Dict[str, Any]:
     """
 

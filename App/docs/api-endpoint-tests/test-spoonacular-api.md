@@ -1,0 +1,1 @@
+uv run python tests/test_spoonacular_api.py

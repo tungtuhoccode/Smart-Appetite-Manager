@@ -3,18 +3,12 @@ import { inventoryRestApi } from "@/api/inventoryRest";
 import { useGateway } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { InventoryTable } from "@/components/inventory/InventoryTable";
 import { AddItemDialog } from "@/components/inventory/AddItemDialog";
 import { EditItemDialog } from "@/components/inventory/EditItemDialog";
 import { DeleteItemDialog } from "@/components/inventory/DeleteItemDialog";
+import { AssistantPanel } from "@/components/inventory/AssistantPanel";
 
 const gatewayStorage = {
   gatewayUrl: "inventory_gateway_url",
@@ -81,7 +75,6 @@ export default function InventoryPage() {
     },
   ]);
   const fetchingRef = useRef(false);
-  const chatScrollRef = useRef(null);
 
   const persistSession = useCallback(() => {
     const currentSessionId = client.getSessionId();
@@ -250,12 +243,6 @@ export default function InventoryPage() {
     }
   }, [api, chatInput, chatSending, fetchItems, persistSession]);
 
-  useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [chatMessages, chatOpen]);
-
   const sortedItems = useMemo(() => {
     const next = [...items];
     next.sort((a, b) => {
@@ -293,8 +280,28 @@ export default function InventoryPage() {
             >
               {loading ? "Refreshing..." : "Refresh"}
             </Button>
-            <Button variant="outline" onClick={() => setChatOpen(true)}>
-              Manage via Chat
+            <Button
+              variant="outline"
+              onClick={() => setChatOpen(true)}
+              className="gap-1.5"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4"
+              >
+                <path d="M12 6c-1.7 0-3 1.1-3 2.5S10.3 11 12 11s3-1.1 3-2.5S13.7 6 12 6z" />
+                <path d="M17 3.3C15.5 2.5 13.8 2 12 2s-3.5.5-5 1.3" />
+                <path d="M2 16.5c0-2 2-3.5 4.5-4.3" />
+                <path d="M17.5 12.2c2.5.8 4.5 2.3 4.5 4.3" />
+                <path d="M4.5 21a9.9 9.9 0 0 1 15 0" />
+              </svg>
+              Ask Assistant
             </Button>
             <Button onClick={() => setAddOpen(true)}>Add Items</Button>
           </div>
@@ -352,59 +359,15 @@ export default function InventoryPage() {
         loading={mutating}
       />
 
-      <Dialog open={chatOpen} onOpenChange={setChatOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Inventory Chat</DialogTitle>
-            <DialogDescription>
-              Manage inventory through chat with the same session context.
-              {chatSessionId ? ` Session: ${chatSessionId}` : ""}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div
-            ref={chatScrollRef}
-            className="max-h-[50vh] overflow-y-auto rounded-md border bg-muted/20 p-3 space-y-2"
-          >
-            {chatMessages.map((message) => (
-              <div
-                key={message.id}
-                className={`rounded-md px-3 py-2 text-sm whitespace-pre-wrap ${
-                  message.role === "user"
-                    ? "ml-8 bg-primary/10 border border-primary/20"
-                    : "mr-8 bg-background border"
-                }`}
-              >
-                {message.text}
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-2">
-            <textarea
-              className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-vertical"
-              placeholder='Try: "Add 2 kg rice and 1 liter milk", or "decrease eggs by 2 unit".'
-              value={chatInput}
-              onChange={(event) => setChatInput(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  void sendChat();
-                }
-              }}
-              disabled={chatSending}
-            />
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-muted-foreground">
-                Press Ctrl/Cmd + Enter to send.
-              </p>
-              <Button onClick={() => void sendChat()} disabled={chatSending || !chatInput.trim()}>
-                {chatSending ? "Sending..." : "Send"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <AssistantPanel
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        messages={chatMessages}
+        input={chatInput}
+        onInputChange={setChatInput}
+        onSend={() => void sendChat()}
+        sending={chatSending}
+      />
     </div>
   );
 }

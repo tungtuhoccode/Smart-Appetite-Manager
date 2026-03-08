@@ -693,6 +693,52 @@ async def delete_inventory_item(
             pass
 
 
+@logged_tool("inventory.get_ingredient_names")
+async def get_ingredient_names(
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return a comma-separated string of all product names in inventory, ready for recipe search."""
+    log_id = "[InventoryTools:get_ingredient_names]"
+    db_path = _get_db_path(tool_config)
+    if not db_path:
+        return _error_response("read", "Missing db_path in tool_config.")
+
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _open_sqlite(db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT product_name FROM inventory WHERE quantity > 0 ORDER BY product_name"
+        )
+        names = [row["product_name"] for row in cur.fetchall()]
+        log.info(f"{log_id} Found {len(names)} ingredient(s)")
+        if not names:
+            return {
+                "status": "success",
+                "count": 0,
+                "ingredients": "",
+                "message": "Inventory is empty.",
+            }
+        return {
+            "status": "success",
+            "count": len(names),
+            "ingredients": ",".join(names),
+        }
+    except sqlite3.Error as e:
+        log.error(f"{log_id} SQLite error: {e}", exc_info=True)
+        return _error_response("read", f"SQLite error: {e}")
+    except Exception as e:
+        log.error(f"{log_id} Unexpected error: {e}", exc_info=True)
+        return _error_response("read", f"Unexpected error: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 @logged_tool("inventory.list_inventory_items")
 async def list_inventory_items(
     limit: int = 100,

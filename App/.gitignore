@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+**/node_modules/
 
 # OS files
 .DS_Store

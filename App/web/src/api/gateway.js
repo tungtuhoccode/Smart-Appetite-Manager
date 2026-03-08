@@ -9,6 +9,7 @@
 const DEFAULT_GATEWAY_URL = "http://localhost:8000";
 
 function makeId(prefix) {
+  
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
     return `${prefix}-${window.crypto.randomUUID()}`;
   }

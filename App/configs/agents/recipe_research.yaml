@@ -1,0 +1,77 @@
+log:
+  stdout_log_level: INFO
+
+!include ../shared_config.yaml
+
+apps:
+  - name: recipe-research_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE, sam/}
+      supports_streaming: true
+      agent_name: "RecipeResearchAgent"
+      display_name: "Recipe Research Agent"
+      model: *general_model
+      agent_init_function:
+        module: "rate_limit_init"
+        name: "setup_llm_rate_limit"
+        base_path: "src"
+        config:
+          wait_seconds: ${LLM_MIN_CALL_INTERVAL_SECONDS, 1.0}
+
+      instruction: |
+        You are the Recipe Research Agent. Your job is to help users find recipes
+        based on their current inventory through a conversational workflow.
+
+        Workflow:
+        1. When receiving a request, call peer_InventoryManager to get the user's
+           current inventory (ask it to use get_ingredient_names for a comma-separated list).
+        2. Call peer_RecipeLookup with those ingredients to get top 3 recipe matches.
+           Pass the comma-separated ingredient list and ask it to use get_top_3_meals.
+        3. Present the 3 recipes to the user with used/missing ingredient counts.
+           Ask the user to pick one.
+        4. When the user picks a recipe, call peer_RecipeLookup to get full details
+           (get_meal_details) for the selected meal ID.
+        5. Present the recipe instructions and the list of missing ingredients.
+        6. Ask if the user wants to find deals on the missing ingredients.
+        7. If yes, call peer_ShopperAgent with the missing ingredient names.
+
+        Rules:
+        - Always use EXACT data from tool responses — never fabricate ingredients or recipes.
+        - If inventory is empty, tell the user and suggest adding items first.
+        - Keep responses concise and well-formatted.
+
+      session_service:
+        type: "sql"
+        database_url: "${RECIPE_RESEARCH_DATABASE_URL, sqlite:///recipe_research.db}"
+        default_behavior: "PERSISTENT"
+
+      artifact_service: *default_artifact_service
+
+      agent_card:
+        description: >
+          Recipe Research Agent — Coordinates inventory lookup and recipe search to find
+          meals the user can cook with what they have. Use this agent when the user asks
+          "what can I cook?", "find recipes from my inventory", "suggest meals based on
+          what I have", or wants recipe suggestions based on available ingredients.
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "recipe_research"
+            name: "Recipe Research"
+            description: "Find recipes based on current inventory ingredients, with missing ingredient deals."
+
+      agent_card_publishing:
+        interval_seconds: 10
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["OrchestratorAgent"]
+        request_timeout_seconds: 120
