@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ExecutionTimeline } from "@/components/progress/ExecutionTimeline";
+import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
+import { useResizableSidebar } from "@/lib/useResizableSidebar";
 import { XIcon, SendIcon, MicIcon, MicOffIcon, ChefHatIcon } from "lucide-react";
 
 function AssistantAvatar({ size = "sm" }) {
@@ -90,6 +92,9 @@ export function AssistantPanel({
 
   const { listening, toggle: toggleMic, supported: micSupported } =
     useSpeechRecognition(handleDictation);
+  const { panelWidth, isResizing, startResize } = useResizableSidebar({
+    storageKey: "assistant_sidebar_width",
+  });
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -108,17 +113,27 @@ export function AssistantPanel({
       {/* Subtle overlay - clickable to close, no blur */}
       {open && (
         <div
-          className="fixed inset-0 z-40 bg-black/5 transition-opacity duration-200 sm:hidden"
+          className="fixed inset-0 z-40 bg-black/10 transition-opacity duration-200 sm:hidden"
           onClick={onClose}
         />
       )}
 
       {/* Side panel */}
       <div
-        className={`fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-background border-l shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
+        style={{ "--assistant-panel-width": `${panelWidth}px` }}
+        className={`fixed top-0 right-0 z-50 h-full w-full sm:w-[var(--assistant-panel-width)] border-l shadow-2xl flex flex-col transition-transform duration-300 ease-out bg-[radial-gradient(circle_at_top,_rgba(255,247,236,0.95),_rgba(255,255,255,0.98)_45%),linear-gradient(180deg,_rgba(255,250,244,0.88),_rgba(255,255,255,1))] ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
+        <button
+          type="button"
+          className={`hidden sm:block absolute left-0 top-0 h-full w-2 -translate-x-1/2 cursor-col-resize ${
+            isResizing ? "bg-amber-300/30" : "bg-transparent"
+          }`}
+          onMouseDown={startResize}
+          aria-label="Resize assistant panel"
+        />
+
         {/* Header */}
         <div className="flex h-14 items-center gap-3 px-4 border-b bg-gradient-to-r from-amber-50 to-orange-50">
           <AssistantAvatar size="md" />
@@ -138,7 +153,7 @@ export function AssistantPanel({
         {/* Messages */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
+          className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-[linear-gradient(180deg,rgba(255,255,255,0),rgba(255,250,243,0.55))]"
         >
           {messages.map((message) => (
             <div
@@ -154,10 +169,14 @@ export function AssistantPanel({
                 className={`max-w-[84%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
                   message.role === "user"
                     ? "bg-primary text-primary-foreground rounded-br-md"
-                    : "bg-muted/60 border rounded-bl-md"
+                    : "bg-white/95 border border-amber-200/70 shadow-sm rounded-bl-md"
                 }`}
               >
-                {message.text}
+                {message.role === "assistant" ? (
+                  <MarkdownRenderer content={message.text} />
+                ) : (
+                  message.text
+                )}
                 {message.role === "assistant" && Array.isArray(message.timeline) && message.timeline.length > 0 ? (
                   <ExecutionTimeline
                     steps={message.timeline}
@@ -172,7 +191,7 @@ export function AssistantPanel({
           {sending && (
             <div className="flex gap-2 items-end">
               <AssistantAvatar />
-              <div className="bg-muted/60 border rounded-2xl rounded-bl-md px-3 py-2 max-w-[84%] w-full">
+              <div className="bg-white/90 border border-amber-200/70 rounded-2xl rounded-bl-md px-3 py-2 max-w-[84%] w-full shadow-sm">
                 {Array.isArray(activeTimeline) && activeTimeline.length > 0 ? (
                   <ExecutionTimeline
                     steps={activeTimeline}

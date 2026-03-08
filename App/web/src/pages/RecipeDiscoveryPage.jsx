@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useGateway } from "@/api";
 import { AGENTS } from "@/api/agents";
 import { inventoryRestApi } from "@/api/inventoryRest";
+import { RecipeDetailsDialog } from "@/components/recipes/RecipeDetailsDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { ExecutionTimeline } from "@/components/progress/ExecutionTimeline";
 import {
   appendExecutionLifecycleStep,
@@ -14,20 +16,13 @@ import {
   createExecutionTimelineTracker,
   getExecutionTimelineSnapshot,
 } from "@/lib/executionTimeline";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { useResizableSidebar } from "@/lib/useResizableSidebar";
 import { toast } from "sonner";
 import {
   ChefHatIcon,
   SearchIcon,
   SparklesIcon,
   RefreshCwIcon,
-  ExternalLinkIcon,
   XIcon,
   MessageCircleIcon,
   SendIcon,
@@ -35,6 +30,9 @@ import {
   MicOffIcon,
   AlertTriangleIcon,
   CheckCircle2Icon,
+  UtensilsCrossedIcon,
+  ClockIcon,
+  LeafIcon,
 } from "lucide-react";
 
 const MEALDB_BASE_URL = "https://www.themealdb.com/api/json/v1/1";
@@ -169,6 +167,11 @@ function normalizeIngredientValue(value) {
   return "";
 }
 
+function numberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function normalizeAgentRecipeList(responseText) {
   const parsed = tryParseJSON(responseText);
   const list = Array.isArray(parsed)
@@ -200,6 +203,24 @@ function normalizeAgentRecipeList(responseText) {
       const title = String(recipe.title || recipe.name || "").trim();
       if (!title) return null;
 
+      const explicitUsedCount =
+        numberOrNull(recipe.used_ingredients_count) ??
+        numberOrNull(recipe.usedIngredientsCount) ??
+        numberOrNull(recipe.used_count) ??
+        numberOrNull(recipe.available_ingredients_count) ??
+        numberOrNull(recipe.availableIngredientsCount) ??
+        numberOrNull(recipe.available_count);
+
+      const explicitMissingCount =
+        numberOrNull(recipe.missing_ingredients_count) ??
+        numberOrNull(recipe.missingIngredientsCount) ??
+        numberOrNull(recipe.missing_count) ??
+        numberOrNull(recipe.missed_ingredients_count) ??
+        numberOrNull(recipe.missedIngredientsCount);
+
+      const usedIngredientCount = explicitUsedCount ?? usedIngredients.length;
+      const missingIngredientCount = explicitMissingCount ?? missingIngredients.length;
+
       return {
         id: String(recipe.id || recipe.recipe_id || `agent-recipe-${index}`),
         title,
@@ -211,6 +232,8 @@ function normalizeAgentRecipeList(responseText) {
         ).trim(),
         usedIngredients,
         missingIngredients,
+        usedIngredientCount,
+        missingIngredientCount,
         sourceUrl: String(recipe.source_url || recipe.sourceUrl || "").trim(),
         provider: "agent",
       };
@@ -302,6 +325,8 @@ function toRecipeCard(meal, pantrySet = new Set()) {
     summary,
     usedIngredients,
     missingIngredients,
+    usedIngredientCount: usedIngredients.length,
+    missingIngredientCount: missingIngredients.length,
     sourceUrl: meal.strSource || meal.strYoutube || "",
     provider: "mealdb",
   };
@@ -403,6 +428,8 @@ function RecipeAssistantPanel({
   onClose,
   messages,
   activeTimeline,
+  suggestions,
+  onSuggestionClick,
   input,
   sending,
   onInputChange,
@@ -419,6 +446,9 @@ function RecipeAssistantPanel({
   );
 
   const { listening, toggle: toggleMic, supported: micSupported } = useSpeechRecognition(handleDictation);
+  const { panelWidth, isResizing, startResize } = useResizableSidebar({
+    storageKey: "assistant_sidebar_width",
+  });
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -437,10 +467,20 @@ function RecipeAssistantPanel({
       {open && <div className="fixed inset-0 z-40 bg-black/10 sm:hidden" onClick={onClose} />}
 
       <div
-        className={`fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-background border-l shadow-2xl flex flex-col transition-transform duration-300 ease-out ${
+        style={{ "--assistant-panel-width": `${panelWidth}px` }}
+        className={`fixed top-0 right-0 z-50 h-full w-full sm:w-[var(--assistant-panel-width)] border-l shadow-2xl flex flex-col transition-transform duration-300 ease-out bg-[radial-gradient(circle_at_top,_rgba(255,247,236,0.95),_rgba(255,255,255,0.98)_45%),linear-gradient(180deg,_rgba(255,250,244,0.88),_rgba(255,255,255,1))] ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
+        <button
+          type="button"
+          className={`hidden sm:block absolute left-0 top-0 h-full w-2 -translate-x-1/2 cursor-col-resize ${
+            isResizing ? "bg-amber-300/30" : "bg-transparent"
+          }`}
+          onMouseDown={startResize}
+          aria-label="Resize assistant panel"
+        />
+
         <div className="flex h-14 items-center gap-3 px-4 border-b bg-gradient-to-r from-amber-50 to-orange-50">
           <AssistantAvatar />
           <div className="flex-1 min-w-0">
@@ -454,7 +494,31 @@ function RecipeAssistantPanel({
           </Button>
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {Array.isArray(suggestions) && suggestions.length > 0 && (
+          <div className="px-4 py-2 border-b bg-background">
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((tag) => (
+                <Button
+                  key={`chat-suggestion-${tag}`}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="bg-white"
+                  onClick={() => onSuggestionClick?.(tag)}
+                  disabled={sending}
+                >
+                  <SparklesIcon className="w-3.5 h-3.5" />
+                  {tag}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-[linear-gradient(180deg,rgba(255,255,255,0),rgba(255,250,243,0.55))]"
+        >
           {messages.map((message) => (
             <div
               key={message.id}
@@ -462,13 +526,17 @@ function RecipeAssistantPanel({
             >
               {message.role === "assistant" && <AssistantAvatar />}
               <div
-                className={`max-w-[84%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
+                className={`max-w-[84%] rounded-2xl px-3 py-2 text-sm ${
                   message.role === "user"
                     ? "bg-primary text-primary-foreground rounded-br-md"
-                    : "bg-muted/60 border rounded-bl-md"
+                    : "bg-white/95 border border-amber-200/70 shadow-sm rounded-bl-md"
                 }`}
               >
-                {message.text}
+                {message.role === "assistant" ? (
+                  <MarkdownRenderer content={message.text} />
+                ) : (
+                  <span className="whitespace-pre-wrap">{message.text}</span>
+                )}
                 {message.role === "assistant" &&
                 Array.isArray(message.timeline) &&
                 message.timeline.length > 0 ? (
@@ -485,7 +553,7 @@ function RecipeAssistantPanel({
           {sending && (
             <div className="flex gap-2 items-end">
               <AssistantAvatar />
-              <div className="bg-muted/60 border rounded-2xl rounded-bl-md px-3 py-2 max-w-[84%] w-full">
+              <div className="bg-white/90 border border-amber-200/70 rounded-2xl rounded-bl-md px-3 py-2 max-w-[84%] w-full shadow-sm">
                 {Array.isArray(activeTimeline) && activeTimeline.length > 0 ? (
                   <ExecutionTimeline
                     steps={activeTimeline}
@@ -554,36 +622,87 @@ function RecipeAssistantPanel({
 }
 
 function RecipeCard({ recipe, onView }) {
+  const totalIngredients = recipe.usedIngredients.length + recipe.missingIngredients.length;
+  const matchPercent = totalIngredients > 0 ? Math.round((recipe.usedIngredients.length / totalIngredients) * 100) : 0;
+
   return (
-    <Card className="overflow-hidden border-orange-100/80 bg-white/90 shadow-sm">
-      {recipe.imageUrl ? (
-        <img src={recipe.imageUrl} alt={recipe.title} className="h-36 w-full object-cover" loading="lazy" />
-      ) : (
-        <div className="h-36 w-full bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center">
-          <ChefHatIcon className="h-8 w-8 text-orange-500" />
-        </div>
-      )}
+    <Card
+      className="group overflow-hidden border-orange-100/60 bg-white shadow-sm hover:shadow-lg hover:border-orange-200/80 transition-all duration-300 cursor-pointer"
+      onClick={() => onView(recipe)}
+    >
+      <div className="relative">
+        {recipe.imageUrl ? (
+          <img
+            src={recipe.imageUrl}
+            alt={recipe.title}
+            className="h-44 w-full object-cover group-hover:scale-105 transition-transform duration-500"
+            loading="lazy"
+          />
+        ) : (
+          <div className="h-44 w-full bg-gradient-to-br from-amber-50 to-orange-100 flex items-center justify-center">
+            <ChefHatIcon className="h-10 w-10 text-orange-400" />
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
 
-      <CardContent className="p-4 space-y-3">
-        <div>
-          <h3 className="font-semibold leading-tight">{recipe.title}</h3>
-          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{recipe.summary}</p>
-        </div>
+        {totalIngredients > 0 && (
+          <div className="absolute top-2.5 right-2.5">
+            <div className={`text-xs font-semibold px-2 py-1 rounded-full backdrop-blur-sm ${
+              matchPercent >= 70
+                ? "bg-emerald-500/90 text-white"
+                : matchPercent >= 40
+                  ? "bg-amber-500/90 text-white"
+                  : "bg-white/80 text-gray-700"
+            }`}>
+              {recipe.usedIngredients.length}/{totalIngredients} match
+            </div>
+          </div>
+        )}
 
-        <div className="flex flex-wrap gap-1.5 min-h-6">
-          {recipe.usedIngredients.slice(0, 2).map((ingredient) => (
-            <Badge key={`used-${recipe.id}-${ingredient}`} variant="secondary">
+        <div className="absolute bottom-0 left-0 right-0 p-3">
+          <h3 className="font-semibold text-white text-sm leading-snug drop-shadow-md line-clamp-2">
+            {recipe.title}
+          </h3>
+        </div>
+      </div>
+
+      <CardContent className="p-3 space-y-2.5">
+        <p className="text-xs text-muted-foreground line-clamp-1">{recipe.summary}</p>
+
+        <div className="flex flex-wrap gap-1">
+          {recipe.usedIngredients.slice(0, 3).map((ingredient) => (
+            <Badge
+              key={`used-${recipe.id}-${ingredient}`}
+              className="bg-emerald-50 text-emerald-700 border-emerald-200/60 text-[10px] font-medium px-1.5 py-0"
+            >
               {ingredient}
             </Badge>
           ))}
           {recipe.missingIngredients.slice(0, 2).map((ingredient) => (
-            <Badge key={`missing-${recipe.id}-${ingredient}`} variant="outline">
-              Missing: {ingredient}
+            <Badge
+              key={`missing-${recipe.id}-${ingredient}`}
+              variant="outline"
+              className="text-[10px] text-muted-foreground border-dashed px-1.5 py-0"
+            >
+              {ingredient}
             </Badge>
           ))}
+          {(recipe.usedIngredients.length + recipe.missingIngredients.length > 5) && (
+            <span className="text-[10px] text-muted-foreground self-center">
+              +{recipe.usedIngredients.length + recipe.missingIngredients.length - 5} more
+            </span>
+          )}
         </div>
 
-        <Button className="w-full" variant="outline" onClick={() => onView(recipe)}>
+        <Button
+          className="w-full h-8 text-xs font-medium"
+          variant="outline"
+          onClick={(e) => {
+            e.stopPropagation();
+            onView(recipe);
+          }}
+        >
+          <UtensilsCrossedIcon className="w-3.5 h-3.5 mr-1" />
           View Recipe
         </Button>
       </CardContent>
@@ -602,6 +721,7 @@ export default function RecipeDiscoveryPage() {
   const [inventoryNames, setInventoryNames] = useState([]);
   const [inventoryFreshness, setInventoryFreshness] = useState("no_cache");
   const [cachedFingerprint, setCachedFingerprint] = useState("");
+  const [inventoryProgressTimeline, setInventoryProgressTimeline] = useState([]);
 
   const [featuredRecipe, setFeaturedRecipe] = useState(null);
   const [featuredLoading, setFeaturedLoading] = useState(false);
@@ -623,6 +743,7 @@ export default function RecipeDiscoveryPage() {
   const [chatActiveTimeline, setChatActiveTimeline] = useState([]);
 
   const msgIdRef = useRef(1);
+  const inventoryProgressTrackerRef = useRef(null);
   const chatTimelineTrackerRef = useRef(null);
 
   useEffect(() => {
@@ -729,12 +850,24 @@ export default function RecipeDiscoveryPage() {
   const generateInventorySuggestions = useCallback(async () => {
     setInventoryLoading(true);
     setInventoryError(null);
+    const tracker = createExecutionTimelineTracker();
+    inventoryProgressTrackerRef.current = tracker;
+    appendExecutionLifecycleStep(tracker, {
+      status: "info",
+      title: "Preparing inventory snapshot",
+    });
+    setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
 
     try {
       const rows = await fetchCurrentInventory();
       const names = rows.map((row) => row.name);
       setInventoryItemCount(rows.length);
       setInventoryNames(names);
+      appendExecutionLifecycleStep(tracker, {
+        status: "completed",
+        title: `Inventory snapshot ready (${rows.length} item${rows.length === 1 ? "" : "s"})`,
+      });
+      setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
 
       if (!rows.length) {
         setInventorySuggestions([]);
@@ -742,6 +875,11 @@ export default function RecipeDiscoveryPage() {
         setInventoryFreshness("no_cache");
         setInventoryLastUpdated(null);
         localStorage.removeItem(BEST_CACHE_KEY);
+        appendExecutionLifecycleStep(tracker, {
+          status: "completed",
+          title: "No pantry items available to generate recommendations",
+        });
+        setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
         return;
       }
 
@@ -752,11 +890,31 @@ export default function RecipeDiscoveryPage() {
         unit: row.unit,
       }));
 
+      appendExecutionLifecycleStep(tracker, {
+        status: "running",
+        title: "Requesting best recipes from backend",
+      });
+      setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
+
       const response = await client.send(
         `Based on this inventory JSON, recommend the best 3 recipes. Return ONLY JSON array with fields: id, title, summary, used_ingredients (array), missing_ingredients (array), image_url, source_url.\nInventory: ${JSON.stringify(
           inventoryPayload
         )}`,
-        AGENTS.RECIPE_RESEARCH
+        AGENTS.RECIPE_RESEARCH,
+        {
+          onStatus: (statusText, payload) => {
+            const changed = applyStatusUpdateToTimeline(tracker, statusText, payload);
+            if (changed) {
+              setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
+            }
+          },
+          onArtifact: (payload) => {
+            const changed = applyArtifactUpdateToTimeline(tracker, payload);
+            if (changed) {
+              setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
+            }
+          },
+        }
       );
 
       localStorage.setItem(RECIPE_SESSION_KEY, client.getSessionId());
@@ -777,11 +935,23 @@ export default function RecipeDiscoveryPage() {
         inventoryFingerprint: fingerprint,
         inventorySnapshot: rows,
       });
+      appendExecutionLifecycleStep(tracker, {
+        status: "completed",
+        title: `Generated ${recipes.length} recommendation${recipes.length === 1 ? "" : "s"}`,
+      });
+      setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setInventoryError(message);
+      appendExecutionLifecycleStep(tracker, {
+        status: "error",
+        title: "Recommendation generation failed",
+        detail: message,
+      });
+      setInventoryProgressTimeline(getExecutionTimelineSnapshot(tracker));
       toast.error("Could not generate pantry recommendations", { description: message });
     } finally {
+      inventoryProgressTrackerRef.current = null;
       setInventoryLoading(false);
     }
   }, [client, fetchCurrentInventory]);
@@ -939,6 +1109,11 @@ export default function RecipeDiscoveryPage() {
     }
   }, [chatInput, chatSending, client]);
 
+  const handleQuickSuggestion = useCallback((tag) => {
+    setChatOpen(true);
+    setChatInput(tag);
+  }, []);
+
   const inventoryMeta = useMemo(() => {
     if (!inventoryItemCount) return "Pantry is empty";
     const suffix = inventoryItemCount === 1 ? "ingredient" : "ingredients";
@@ -1000,8 +1175,7 @@ export default function RecipeDiscoveryPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setSearchQuery(tag);
-                    void runRecipeSearch(tag);
+                    handleQuickSuggestion(tag);
                   }}
                   className="bg-white"
                 >
@@ -1102,6 +1276,14 @@ export default function RecipeDiscoveryPage() {
                 </div>
               )}
 
+              {inventoryProgressTimeline.length > 0 && (
+                <ExecutionTimeline
+                  steps={inventoryProgressTimeline}
+                  heading="Recommendation generation progress"
+                  defaultExpanded={inventoryLoading}
+                />
+              )}
+
               {!hasCachedSuggestions && !inventoryLoading && (
                 <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                   Generate best pantry matches once, then they stay cached in your browser until you refresh.
@@ -1124,8 +1306,33 @@ export default function RecipeDiscoveryPage() {
                     className="w-full text-left rounded-lg border p-3 hover:bg-muted/40 transition-colors"
                     onClick={() => void openRecipeDetails(recipe)}
                   >
-                    <p className="font-medium">{recipe.title}</p>
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{recipe.summary}</p>
+                    <div className="flex items-start gap-3">
+                      {recipe.imageUrl ? (
+                        <img
+                          src={recipe.imageUrl}
+                          alt={recipe.title}
+                          className="h-16 w-16 rounded-md border object-cover shrink-0"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="h-16 w-16 rounded-md border bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center shrink-0">
+                          <ChefHatIcon className="h-5 w-5 text-orange-500" />
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium line-clamp-2">{recipe.title}</p>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          <Badge variant="secondary" className="text-[11px]">
+                            Available: {recipe.usedIngredientCount ?? recipe.usedIngredients?.length ?? 0}
+                          </Badge>
+                          <Badge variant="outline" className="text-[11px]">
+                            Missing: {recipe.missingIngredientCount ?? recipe.missingIngredients?.length ?? 0}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{recipe.summary}</p>
+                      </div>
+                    </div>
                   </button>
                 ))}
             </CardContent>
@@ -1189,14 +1396,20 @@ export default function RecipeDiscoveryPage() {
         onClose={() => setChatOpen(false)}
         messages={chatMessages}
         activeTimeline={chatActiveTimeline}
+        suggestions={QUICK_TAGS}
+        onSuggestionClick={handleQuickSuggestion}
         input={chatInput}
         sending={chatSending}
         onInputChange={setChatInput}
         onSend={() => void sendChat()}
       />
 
-      <Dialog
+      <RecipeDetailsDialog
         open={!!selectedRecipe}
+        selectedRecipe={selectedRecipe}
+        recipeDetails={recipeDetails}
+        detailLoading={detailLoading}
+        detailError={detailError}
         onOpenChange={(open) => {
           if (!open) {
             setSelectedRecipe(null);
@@ -1204,74 +1417,7 @@ export default function RecipeDiscoveryPage() {
             setDetailError(null);
           }
         }}
-      >
-        <DialogContent className="max-w-[920px] p-0 overflow-hidden">
-          <div className="grid gap-0 md:grid-cols-[340px,1fr]">
-            <div className="bg-muted/30 border-r">
-              {recipeDetails?.imageUrl || selectedRecipe?.imageUrl ? (
-                <img
-                  src={recipeDetails?.imageUrl || selectedRecipe?.imageUrl}
-                  alt={recipeDetails?.title || selectedRecipe?.title || "Recipe"}
-                  className="h-56 md:h-full w-full object-cover"
-                />
-              ) : (
-                <div className="h-56 md:h-full w-full flex items-center justify-center bg-gradient-to-br from-amber-100 to-orange-100">
-                  <ChefHatIcon className="h-10 w-10 text-orange-500" />
-                </div>
-              )}
-            </div>
-
-            <div className="p-5 md:p-6 max-h-[80vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>{recipeDetails?.title || selectedRecipe?.title || "Recipe details"}</DialogTitle>
-                <DialogDescription>MealDB recipe details.</DialogDescription>
-              </DialogHeader>
-
-              {detailLoading && <p className="text-sm text-muted-foreground mt-4">Loading details...</p>}
-
-              {detailError && (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive mt-4">
-                  {detailError}
-                </div>
-              )}
-
-              {!detailLoading && !detailError && (
-                <div className="space-y-5 mt-4">
-                  {recipeDetails?.ingredients?.length > 0 && (
-                    <section>
-                      <h4 className="font-semibold mb-2">Ingredients</h4>
-                      <ul className="list-disc pl-5 text-sm space-y-1">
-                        {recipeDetails.ingredients.map((item) => (
-                          <li key={`ingredient-${item}`}>{item}</li>
-                        ))}
-                      </ul>
-                    </section>
-                  )}
-
-                  <section>
-                    <h4 className="font-semibold mb-2">Instructions</h4>
-                    <div className="text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
-                      {recipeDetails?.instructions || "Instructions were not returned for this recipe."}
-                    </div>
-                  </section>
-
-                  {(recipeDetails?.sourceUrl || selectedRecipe?.sourceUrl) && (
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        window.open(recipeDetails?.sourceUrl || selectedRecipe?.sourceUrl, "_blank", "noopener,noreferrer")
-                      }
-                    >
-                      <ExternalLinkIcon className="w-4 h-4" />
-                      Open source
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      />
     </div>
   );
 }

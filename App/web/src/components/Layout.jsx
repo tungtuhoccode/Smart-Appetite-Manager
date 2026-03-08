@@ -8,7 +8,7 @@ export default function Layout() {
       <nav className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 flex items-center h-14 gap-6">
           <span className="font-bold text-lg tracking-tight">
-            Smart Appetite
+            Smart Appetite Manager
           </span>
           <div className="flex gap-1">
             <NavLink
