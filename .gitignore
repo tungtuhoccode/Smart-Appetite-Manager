@@ -1,0 +1,21 @@
+# Secrets / environment
+.env
+App/.env
+
+# Dev utility scripts (contain or reference secrets)
+check_usage.sh
+dev.sh
+
+# Runtime artifacts
+inventory.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
