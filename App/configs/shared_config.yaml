@@ -21,6 +21,12 @@ shared_config:
       api_base: ${LLM_SERVICE_ENDPOINT}
       api_key: ${LLM_SERVICE_API_KEY}
 
+    parsing: &parsing_model
+      model: ${LLM_SERVICE_PARSING_MODEL_NAME, openai/bedrock-claude-4-5-sonnet}
+      api_base: ${LLM_SERVICE_ENDPOINT}
+      api_key: ${LLM_SERVICE_API_KEY}
+      temperature: 0.1
+
   - services:
     # Session service - defaults to memory, set PERSISTENCE_TYPE=sql for PostgreSQL persistence
     session_service: &default_session_service

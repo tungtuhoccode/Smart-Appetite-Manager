@@ -29,7 +29,7 @@ apps:
         based on their current inventory through a conversational workflow.
 
         Workflow:
-        1. When receiving a request, call peer_InventoryManager to get the user's
+        1. When receiving a request, call peer_InventoryDB to get the user's
            current inventory (ask it to use get_ingredient_names for a comma-separated list).
         2. Before searching, ask the user about their preferences (unless already specified):
            - Dietary restrictions (e.g., vegetarian, vegan, gluten-free)

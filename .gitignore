@@ -5,7 +5,7 @@ App/.env
 # Dev utility scripts (contain or reference secrets)
 check_usage.sh
 dev.sh
-
+.Claude
 # Runtime artifacts
 inventory.db
 

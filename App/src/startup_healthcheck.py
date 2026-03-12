@@ -36,7 +36,6 @@ log = logging.getLogger(__name__)
 _REQUIRED_ENV_VARS = (
     "LLM_SERVICE_API_KEY",
     "SPOONACULAR_API_KEY",
-    "SERPAPI_KEY",
     "INVENTORY_MANAGER_DB_NAME",
 )
 
@@ -56,8 +55,8 @@ _TOOL_FUNCTIONS = {
     ),
     "shopper_agent.grocery_tools": (
         "check_local_flyers",
-        "get_standard_price",
         "find_best_deals_batch",
+        "find_deals_with_map",
     ),
     "receipt_agent.receipt_tools": ("parse_receipt_text",),
 }
@@ -253,43 +252,33 @@ def _check_spoonacular_api(network_enabled: bool) -> CheckResult:
         )
 
 
-def _check_serpapi_api(network_enabled: bool) -> CheckResult:
-    api_key = (os.getenv("SERPAPI_KEY") or "").strip()
-    if not api_key:
-        return CheckResult(
-            name="SerpApi",
-            status="fail",
-            message="SERPAPI_KEY is missing.",
-        )
+def _check_flipp_api(network_enabled: bool) -> CheckResult:
     if not network_enabled:
         return CheckResult(
-            name="SerpApi",
+            name="Flipp API",
             status="warn",
             message="Skipped (STARTUP_HEALTHCHECK_NETWORK=false).",
         )
 
-    url = f"https://serpapi.com/account.json?{urllib.parse.urlencode({'api_key': api_key})}"
+    postal_code = (os.getenv("FLIPP_POSTAL_CODE") or "K1A 0A6").strip()
+    params = urllib.parse.urlencode({"locale": "en-us", "postal_code": postal_code, "q": "milk"})
+    url = f"https://backflipp.wishabi.com/flipp/items/search?{params}"
     try:
         payload = _http_get_json(url, timeout_seconds=12.0)
-        if isinstance(payload, dict) and payload.get("error"):
+        if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+            item_count = len(payload["items"])
             return CheckResult(
-                name="SerpApi",
-                status="fail",
-                message=f"API returned error: {payload.get('error')}",
-            )
-        if isinstance(payload, dict):
-            return CheckResult(
-                name="SerpApi",
+                name="Flipp API",
                 status="pass",
-                message="Live API call succeeded.",
+                message=f"Live API call succeeded ({item_count} items for postal code {postal_code}).",
             )
         return CheckResult(
-            name="SerpApi",
+            name="Flipp API",
             status="fail",
             message="Unexpected response payload shape.",
         )
     except Exception as e:
-        return CheckResult(name="SerpApi", status="fail", message=str(e))
+        return CheckResult(name="Flipp API", status="fail", message=str(e))
 
 
 def run_startup_health_checks(logger: Optional[logging.Logger] = None) -> Dict[str, Any]:
@@ -325,7 +314,7 @@ def run_startup_health_checks(logger: Optional[logging.Logger] = None) -> Dict[s
     results.extend(_check_tool_imports())
     results.append(_check_inventory_database())
     results.append(_check_spoonacular_api(network_enabled))
-    results.append(_check_serpapi_api(network_enabled))
+    results.append(_check_flipp_api(network_enabled))
 
     pass_count = sum(1 for r in results if r.status == "pass")
     warn_count = sum(1 for r in results if r.status == "warn")

@@ -1,0 +1,121 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: inventory-db.log
+
+# Shared SAM config
+!include ../../shared_config.yaml
+
+apps:
+  - name: inventory-db-app
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+    app_config:
+      namespace: "${NAMESPACE, sam/}"
+      agent_name: "InventoryDB"
+      display_name: "Inventory Database Agent"
+      supports_streaming: true
+
+      model: *general_model
+      agent_init_function:
+        module: "rate_limit_init"
+        name: "setup_llm_rate_limit"
+        base_path: "src"
+        config:
+          wait_seconds: ${LLM_MIN_CALL_INTERVAL_SECONDS, 1.0}
+      instruction: |
+        You are the Inventory Database agent. You are a silent backend worker that performs
+        CRUD operations on the inventory SQLite database. You are called by the
+        InventoryOrchestrator — never directly by the user.
+
+        Your job is simple: receive structured requests and execute the appropriate tool.
+        Return the raw tool result. Do NOT add conversational text, confirmations, or formatting.
+        The InventoryOrchestrator handles all user interaction.
+
+        Tool use:
+        - list_inventory_items: Return current inventory rows.
+        - get_ingredient_names: Return comma-separated ingredient names for recipe search.
+        - insert_inventory_items: Insert items. Expects an `items` parameter: a list of objects,
+          each with product_name (string), quantity (number), quantity_unit (string), unit (string).
+          Auto-merges duplicates (same product_name + quantity_unit + unit) by increasing quantity.
+        - increase_inventory_stock: Increase stock for one existing item.
+        - decrease_inventory_stock: Decrease stock for one existing item.
+        - delete_inventory_item: Permanently remove one item.
+
+        IMPORTANT:
+        - Always return the EXACT tool result. Never fabricate success or error responses.
+        - If a tool call fails, return the exact error message.
+        - Do NOT ask for confirmation — the orchestrator already handled that.
+
+      tools:
+        - tool_type: builtin-group
+          group_name: "artifact_management"
+        - tool_type: builtin-group
+          group_name: "data_analysis"
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "get_ingredient_names"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "list_inventory_items"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "insert_inventory_items"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "increase_inventory_stock"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "decrease_inventory_stock"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "delete_inventory_item"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+
+      session_service:
+        type: "sql"
+        database_url: "${INVENTORY_MANAGER_DATABASE_URL, sqlite:///inventory_manager.db}"
+        default_behavior: "PERSISTENT"
+      artifact_service: *default_artifact_service
+
+      agent_card:
+        description: >
+          Inventory Database Agent — Internal backend agent that performs CRUD operations
+          on the inventory SQLite database. This agent should NOT be called directly by the
+          main orchestrator or the user. It is called by the InventoryOrchestrator to execute
+          database operations: list items, insert items, increase/decrease stock, delete items,
+          and retrieve ingredient names for recipe search.
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "inventory_crud"
+            name: "Inventory CRUD"
+            description: "Performs read, insert, update, and delete operations on the inventory database."
+
+      agent_card_publishing:
+        interval_seconds: 30
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["InventoryOrchestrator", "RecipeResearchAgent"]
+        request_timeout_seconds: 60

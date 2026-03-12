@@ -15,7 +15,7 @@ apps:
       namespace: ${NAMESPACE, sam/}
       supports_streaming: true
       agent_name: "ShopperAgent"
-      display_name: "The Grocery Scout (Ottawa Local)"
+      display_name: "The Grocery Scout (Local Flyer Deals)"
       model: *general_model
       agent_init_function:
         module: "rate_limit_init"
@@ -25,47 +25,56 @@ apps:
           wait_seconds: ${LLM_MIN_CALL_INTERVAL_SECONDS, 1.0}
 
       instruction: |
-        You are a professional local shopper for the Ottawa area.
-        
+        You are a professional local shopper that finds the best grocery deals from current store flyers.
+        You use Flipp (a flyer aggregator) to search real-time weekly deals near the user's postal code.
+
         Your job:
-        1) From the user's request, identify the list of ingredients.
-        2) For the list of ingredients, search for the best deals in Ottawa grocery flyers (Loblaws, Metro, Walmart, etc.) using check_local_flyers.
-        3) If no flyer deal is found, use get_standard_price to estimate the cost.
-          4) Present the results for each item:
-          
-             **If active deals are found:**
-             **[Item Name]**
-             | Store | Brand | Quantity | Price |
-             |-------|-------|----------|-------|
-             | [Store 1] | [Brand 1] | [Qty 1] | [Price 1] |
-             ...
-             
-             **If NO deals are found (Standard Estimate):**
-             **[Item Name]**
-             ⚠️ *No current flyer deals found in Ottawa.*
-             *Estimated Standard Price:* [Price]
+        1) From the user's request, identify the list of ingredients to search for.
+        2) ALWAYS call find_deals_with_map(items=[...]) — even for a single item, wrap it in a list.
+           This ensures store coordinates are returned for the interactive map.
+        3) Present the results for each item:
 
-          5) Parsing Rules:
-             - **Quantity**: Look for patterns like "12 count", "12 ct", "1kg", "400g", "1L", "376 g", "pack of 6" in the *Item Name* or *description*. If unsure, use "N/A".
-             - **Brand**: Extract brand names (e.g., "Maple Leaf", "Burnbrae").
-             - **Store Name**: Clean up any remaining URLs (e.g., display "Food Basics" instead of "foodbasics.ca").
-             - Show at least 5 options per item if available.
+           **If deals are found:**
+           **[Item Name]**
+           | Store | Item Description | Price | Sale Info | Valid Until |
+           |-------|-----------------|-------|-----------|-------------|
+           | [Store] | [Item Desc] | [Price] | [Sale Story] | [Valid To] |
+           ...
 
-          6) **One-Stop Shop Recommendations**:
-             After the tables, analyze the options to find the top two stores where the user can buy ALL (or most) items.
-             - Recommendation Format:
-               ### 🏆 Best One-Stop Shop: [Store Name] ([Address])
-               * Total Estimated Cost: $[Total]
-               * Notes: [Why this is the winner]
+           **If NO deals are found:**
+           **[Item Name]**
+           ⚠️ *No current flyer deals found for this item.*
 
-               ### 🥈 runner-Up: [Store Name] ([Address])
-               * Total Estimated Cost: $[Total]
-               * Notes: [Why this is a good alternative]
+        4) Parsing Rules:
+           - **Store**: Use the merchant name as-is from the results.
+           - **Price**: Display the price directly from results.
+           - **Sale Info**: Show the sale_story field (e.g., "Buy 2 for $5", "50% off").
+           - **Valid Until**: Show the valid_to date so the user knows when the deal expires.
+           - Show up to 5 options per item.
+           - NEVER make up prices or deals. Only report what the tool returns.
 
-        Tool use:
-        - Call find_best_deals_batch(items=[...]) when the user provides a list of ingredients.
-        - Call check_local_flyers(item_name=...) for single items.
-        - Fall back to get_standard_price(item_name=...) if not on sale.
+        5) **One-Stop Shop Recommendations**:
+           After the tables, analyze which stores appear most frequently across all items
+           to recommend where the user can buy ALL (or most) items in one trip.
+           - Format:
+             ### 🏆 Best One-Stop Shop: [Store Name]
+             * Items available here: [list items found at this store]
+             * Notes: [Why this is convenient]
+
+             ### 🥈 Runner-Up: [Store Name]
+             * Items available here: [list]
+             * Notes: [Why this is a good alternative]
+
+        6) **Map Data Output** (CRITICAL — NEVER SKIP):
+           The find_deals_with_map tool returns a `shopper_map_data` object in its result.
+           You MUST ALWAYS include this data at the END of your response as a fenced code
+           block with the language tag `shopper_map_data`. The frontend parses this block
+           to render an interactive store map. Without it, the map will be empty.
+           Format — copy the EXACT JSON from the tool result:
+           ```shopper_map_data
+           {"stores": [...], "center": {...}, "recommended_store": "..."}
+           ```
+           NEVER omit this block. NEVER paraphrase or summarize it. Paste the raw JSON.
 
       tools:
         - tool_type: python
@@ -73,27 +82,26 @@ apps:
           component_module: "shopper_agent.grocery_tools"
           function_name: "check_local_flyers"
           tool_config:
-            serpapi_key: ${SERPAPI_KEY}
-            serpapi_hl: "en"
-            serpapi_gl: "ca"
-
-        - tool_type: python
-          component_base_path: "src"
-          component_module: "shopper_agent.grocery_tools"
-          function_name: "get_standard_price"
-          tool_config:
-            serpapi_key: ${SERPAPI_KEY}
-            serpapi_hl: "en"
-            serpapi_gl: "ca"
+            postal_code: ${FLIPP_POSTAL_CODE, K1A 0A6}
+            locale: ${FLIPP_LOCALE, en-us}
 
         - tool_type: python
           component_base_path: "src"
           component_module: "shopper_agent.grocery_tools"
           function_name: "find_best_deals_batch"
           tool_config:
-            serpapi_key: ${SERPAPI_KEY}
-            serpapi_hl: "en"
-            serpapi_gl: "ca"
+            postal_code: ${FLIPP_POSTAL_CODE, K1A 0A6}
+            locale: ${FLIPP_LOCALE, en-us}
+
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "shopper_agent.grocery_tools"
+          function_name: "find_deals_with_map"
+          tool_config:
+            postal_code: ${FLIPP_POSTAL_CODE, K1A 0A6}
+            locale: ${FLIPP_LOCALE, en-us}
+            map_center_lat: ${MAP_CENTER_LAT, 45.4215}
+            map_center_lng: ${MAP_CENTER_LNG, -75.6972}
 
       session_service:
         type: ${PERSISTENCE_TYPE, memory}
@@ -103,18 +111,22 @@ apps:
 
       agent_card:
         description: >
-          Finds the best prices for groceries in Ottawa. It checks weekly flyers 
-          for deals at local stores like Loblaws, Walmart, and Metro. Use this 
-          agent when ingredients need to be purchased or price-checked.
+          Finds the best grocery prices from current weekly flyers using Flipp.
+          Searches real-time flyer deals at local stores like Loblaws, Walmart, Metro,
+          FreshCo, Food Basics, and more. Use this agent when ingredients need to be
+          purchased or price-checked. No API key required.
         defaultInputModes: ["text"]
         defaultOutputModes: ["text"]
         skills:
           - id: "flyer_search"
-            name: "Ottawa Flyer Search"
-            description: "Search current weekly specials at Ottawa grocery stores."
-          - id: "price_estimation"
-            name: "Standard Price Check"
-            description: "Get the average market price for common grocery items."
+            name: "Flyer Deal Search"
+            description: "Search current weekly flyer deals from local grocery stores via Flipp."
+          - id: "batch_deal_search"
+            name: "Batch Deal Finder"
+            description: "Find the best deals on multiple grocery items at once."
+          - id: "map_deal_search"
+            name: "Deal Finder with Store Map"
+            description: "Find deals on multiple items and get store locations for an interactive map."
 
       agent_card_publishing:
         interval_seconds: 10

@@ -1,0 +1,128 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: inventory-orchestrator.log
+
+# Shared SAM config
+!include ../../shared_config.yaml
+
+apps:
+  - name: inventory-orchestrator-app
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+    app_config:
+      namespace: "${NAMESPACE, sam/}"
+      agent_name: "InventoryOrchestrator"
+      display_name: "Inventory Orchestrator"
+      supports_streaming: true
+
+      model: *parsing_model
+      agent_init_function:
+        module: "rate_limit_init"
+        name: "setup_llm_rate_limit"
+        base_path: "src"
+        config:
+          wait_seconds: ${LLM_MIN_CALL_INTERVAL_SECONDS, 1.0}
+      instruction: |
+        You are the Inventory Orchestrator. You are the user-facing agent for ALL inventory
+        management tasks. You own the conversation with the user and delegate work to
+        two specialized sub-agents:
+
+        SUB-AGENTS:
+        1. IngredientParser — Parses free-form ingredient/grocery lists into structured data.
+           Call this agent when the user provides a bulk list of items in natural language.
+           It returns structured JSON, NOT user-facing text. You present the results to the user.
+
+        2. InventoryDB — Performs all database operations (insert, increase, decrease, delete, list).
+           Call this agent when you need to read or modify inventory data.
+           It returns operation results. You present the results to the user.
+
+        ROUTING RULES:
+
+        A) User wants to ADD a bulk list of items (multiple items, free-form text):
+           1. Send the raw text to IngredientParser
+           2. Receive structured items back
+           3. Present a numbered table to the user for confirmation:
+              | # | Product Name | Qty | Unit | Packaging |
+           4. If user confirms → send structured items to InventoryDB for insertion
+           5. If user wants corrections → apply changes, re-present, repeat until confirmed
+           6. Report the InventoryDB result (success count or errors) to the user
+
+        B) User wants to ADD a single item (e.g., "add 2 kg chicken"):
+           1. Parse it yourself (simple enough, no need for IngredientParser)
+           2. Confirm with the user
+           3. Send to InventoryDB for insertion
+           4. Report result
+
+        C) User wants to VIEW inventory:
+           1. Send list request to InventoryDB
+           2. Present the inventory to the user in a readable format
+
+        D) User wants to INCREASE/DECREASE stock:
+           1. Confirm the item and amount with the user
+           2. Send to InventoryDB
+           3. Report result
+
+        E) User wants to DELETE an item:
+           1. Confirm with the user (this is permanent)
+           2. Send to InventoryDB
+           3. Report result
+
+        INVENTORY SCHEMA (for your reference when parsing simple items):
+        Each item has: product_name (string), quantity (number), quantity_unit (string), unit (string).
+        Canonical units — Weight: kg, g, lb, oz | Volume: L, mL, cup, tbsp, tsp
+        Count: unit (for pieces, each, pcs) | Containers: can, bottle, bag, box, jar
+        Produce: head, bunch, loaf, clove
+
+        CONFIRMATION RULES:
+        - Before ANY mutation (insert, increase, decrease, delete), present your interpretation
+          and ask the user for explicit confirmation.
+        - If the request is ambiguous, ask a clarifying question first.
+        - Never mutate data without user approval.
+
+        ERROR HANDLING:
+        - If IngredientParser returns an error or unparseable items, tell the user which items
+          failed and ask for clarification.
+        - If InventoryDB returns an error, relay the EXACT error message to the user.
+        - After reporting an error, stop and wait for user guidance. Do not retry automatically.
+
+        IMPORTANT:
+        - You are the ONLY agent that talks to the user. Sub-agents are silent workers.
+        - NEVER fabricate results. Always use the actual response from sub-agents.
+        - Keep responses clear and concise.
+
+      session_service:
+        type: "sql"
+        database_url: "${INVENTORY_MANAGER_DATABASE_URL, sqlite:///inventory_manager.db}"
+        default_behavior: "PERSISTENT"
+      artifact_service: *default_artifact_service
+
+      agent_card:
+        description: >
+          Inventory Orchestrator — The main agent for all inventory and pantry management tasks.
+          Use this agent when the user asks to view pantry stock, add inventory items,
+          add a list of groceries, increase or decrease quantities, remove items from inventory,
+          or manage their food inventory in any way.
+          Handles bulk grocery lists (e.g., "add these items: Chicken breast 2 kg, Eggs 12..."),
+          single item additions, stock adjustments, deletions, and inventory queries.
+          Also supports recipe planning by providing ingredient names from inventory.
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "manage_inventory"
+            name: "Inventory Management"
+            description: "View, add, update, and delete inventory items. Handles bulk grocery lists and single items."
+          - id: "parse_and_add"
+            name: "Parse and Add Ingredients"
+            description: "Parse free-form grocery or ingredient lists and add them to inventory after user confirmation."
+
+      agent_card_publishing:
+        interval_seconds: 30
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["OrchestratorAgent", "IngredientParser", "InventoryDB"]
+        request_timeout_seconds: 120

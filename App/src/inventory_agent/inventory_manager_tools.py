@@ -10,18 +10,19 @@ import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
-try:
-    from tool_execution_logger import logged_tool
-except ImportError:  # pragma: no cover
-    from src.tool_execution_logger import logged_tool
 
 log = logging.getLogger(__name__)
 
 
-def _get_db_path(tool_config: Optional[Dict[str, Any]]) -> Optional[str]:
-    if not tool_config:
-        return None
-    return tool_config.get("db_path")
+_DEFAULT_DB_PATH = os.getenv("INVENTORY_MANAGER_DB_NAME", "inventory.db")
+
+
+def _get_db_path(tool_config: Optional[Dict[str, Any]]) -> str:
+    if tool_config:
+        path = tool_config.get("db_path")
+        if path:
+            return path
+    return _DEFAULT_DB_PATH
 
 def _open_sqlite(db_path: str) -> sqlite3.Connection:
     if db_path != ":memory:" and not db_path.startswith("file:"):
@@ -300,7 +301,6 @@ def _find_existing_inventory_row_with_fallback(
     return None, None
 
 
-@logged_tool("inventory.insert_inventory_items")
 async def insert_inventory_items(
     items: List[Dict[str, Any]],
     tool_context: Optional[Any] = None,
@@ -408,7 +408,6 @@ async def insert_inventory_items(
             pass
 
 
-@logged_tool("inventory.increase_inventory_stock")
 async def increase_inventory_stock(
     product_name: str,
     quantity_to_add: float,
@@ -507,7 +506,6 @@ async def increase_inventory_stock(
             pass
 
 
-@logged_tool("inventory.decrease_inventory_stock")
 async def decrease_inventory_stock(
     product_name: str,
     quantity_to_remove: float,
@@ -617,7 +615,6 @@ async def decrease_inventory_stock(
             pass
 
 
-@logged_tool("inventory.delete_inventory_item")
 async def delete_inventory_item(
     product_name: str,
     quantity_unit: Optional[str] = None,
@@ -693,7 +690,6 @@ async def delete_inventory_item(
             pass
 
 
-@logged_tool("inventory.get_ingredient_names")
 async def get_ingredient_names(
     tool_context: Optional[Any] = None,
     tool_config: Optional[Dict[str, Any]] = None,
@@ -739,7 +735,6 @@ async def get_ingredient_names(
             pass
 
 
-@logged_tool("inventory.list_inventory_items")
 async def list_inventory_items(
     limit: int = 100,
     tool_context: Optional[Any] = None,

@@ -11,10 +11,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-try:
-    from tool_execution_logger import logged_tool
-except ImportError:  # pragma: no cover
-    from src.tool_execution_logger import logged_tool
 
 _ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 if _ENV_PATH.exists():
@@ -236,7 +232,6 @@ def _normalize_recipe(raw: Dict, scores: Optional[Dict] = None) -> Dict[str, Any
 # ── Public tool functions ───────────────────────────────────────────
 
 
-@logged_tool("recipe.complex_search")
 async def complex_search(
     query: str = "",
     ingredients: str = "",
@@ -328,7 +323,6 @@ async def complex_search(
     }
 
 
-@logged_tool("recipe.get_top_3_meals")
 async def get_top_3_meals(
     ingredients: str,
     number: int = 3,
@@ -378,7 +372,6 @@ async def get_top_3_meals(
     return {"status": "success", "count": len(results), "meals": results}
 
 
-@logged_tool("recipe.search_meals")
 async def search_meals(
     ingredient: Optional[str] = None,
     category: Optional[str] = None,
@@ -409,7 +402,6 @@ async def search_meals(
     return await get_top_3_meals(ingredient)
 
 
-@logged_tool("recipe.get_meal_details")
 async def get_meal_details(
     meal_id: str,
     tool_context: Any = None,
@@ -464,7 +456,6 @@ async def get_meal_details(
     }
 
 
-@logged_tool("recipe.get_random_meal")
 async def get_random_meal(
     tool_context: Any = None,
 ) -> Dict[str, Any]:
@@ -507,7 +498,6 @@ async def get_random_meal(
 # ── Phase 2: Ingredient Intelligence ───────────────────────────────
 
 
-@logged_tool("recipe.parse_ingredients")
 async def parse_ingredients(
     ingredient_list: str,
     servings: int = 1,
@@ -549,7 +539,6 @@ async def parse_ingredients(
     return {"status": "success", "count": len(parsed), "ingredients": parsed}
 
 
-@logged_tool("recipe.convert_amounts")
 async def convert_amounts(
     ingredient_name: str,
     source_amount: float,
@@ -592,7 +581,6 @@ async def convert_amounts(
     }
 
 
-@logged_tool("recipe.get_substitutes")
 async def get_substitutes(
     ingredient_name: str,
     tool_context: Any = None,

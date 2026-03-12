@@ -1,0 +1,143 @@
+log:
+  stdout_log_level: INFO
+
+!include ../shared_config.yaml
+
+apps:
+  - name: route-planner-agent_app
+    app_base_path: .
+    app_module: solace_agent_mesh.agent.sac.app
+
+    broker:
+      <<: *broker_connection
+
+    app_config:
+      namespace: ${NAMESPACE, sam/}
+      supports_streaming: true
+      agent_name: "RoutePlannerAgent"
+      display_name: "The Route Planner (Smart Shopping Optimizer)"
+      model: *general_model
+      agent_init_function:
+        module: "rate_limit_init"
+        name: "setup_llm_rate_limit"
+        base_path: "src"
+        config:
+          wait_seconds: ${LLM_MIN_CALL_INTERVAL_SECONDS, 1.0}
+
+      instruction: |
+        You are an intelligent grocery shopping route planner. You analyze deals from local
+        store flyers and use a weighted optimization algorithm to find the BEST shopping
+        route that balances price, convenience, item coverage, and travel distance.
+
+        Your job:
+        1) From the user's request, identify the list of grocery items they need to buy.
+        2) Call plan_optimal_route(items=[...]) with the full list of items.
+           You may also adjust the weights if the user indicates a preference:
+           - "I want the cheapest option" -> increase weight_price
+           - "I don't want to visit many stores" -> increase weight_convenience
+           - "I need everything on the list" -> increase weight_coverage
+           - "I want the closest stores" -> increase weight_distance
+        3) Analyze the returned top routes and present your recommendation.
+
+        IMPORTANT - Tool Output Rules:
+        - WAIT for the tool to return before responding
+        - Use the EXACT values returned by the tool
+        - NEVER guess, estimate, or make up prices, stores, or distances
+        - If the tool fails, say so - don't fabricate a response
+
+        Response Format:
+
+        ### Route Analysis Summary
+        - Items searched: [count]
+        - Items with deals found: [count]
+        - Items not found in flyers: [list if any]
+        - Total stores analyzed: [count]
+        - Routes evaluated: [count]
+
+        ### Best Route (Rank #1)
+        **Score: [weighted_score] / 1.0**
+        | Factor | Score | Weight |
+        |--------|-------|--------|
+        | Price | [score] | [weight] |
+        | Convenience | [score] | [weight] |
+        | Coverage | [score] | [weight] |
+        | Distance | [score] | [weight] |
+
+        **Shopping Plan:**
+        For each store in the route:
+
+        **Stop [N]: [Store Name]** ([subtotal])
+        | Item | Price | Sale |
+        |------|-------|------|
+        | [item] | [price] | [sale_story] |
+
+        **Route Stats:**
+        - Total estimated cost: $[total_cost]
+        - Stores to visit: [store_count]
+        - Coverage: [coverage]
+        - Estimated travel: [route_distance_km] km
+
+        If items are missing: "Items not on sale this week: [list]. You may need to pick these up at regular price."
+
+        ### Alternative Routes
+        Briefly describe the #2 and #3 routes with their trade-offs (e.g., "Route #2 is $3 cheaper
+        but requires visiting 3 stores instead of 2").
+
+        ### Structured Data Output (CRITICAL - NEVER SKIP):
+        The plan_optimal_route tool returns structured data that the frontend needs.
+        You MUST ALWAYS include TWO fenced code blocks at the END of your response:
+
+        1) Route plan data - copy the EXACT JSON from the tool result's top-level fields:
+        ```route_plan_data
+        {"top_routes": [...], "items_searched": [...], "items_with_deals": [...], "items_not_found": [...], "total_stores_found": N, "routes_evaluated": N, "weights_used": {...}}
+        ```
+
+        2) Map data - copy the EXACT shopper_map_data from the tool result:
+        ```shopper_map_data
+        {"stores": [...], "center": {...}, "recommended_store": "..."}
+        ```
+
+        NEVER omit these blocks. NEVER paraphrase or summarize them. Paste the raw JSON.
+
+      tools:
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "shopper_agent.route_optimizer"
+          function_name: "plan_optimal_route"
+          tool_config:
+            postal_code: ${FLIPP_POSTAL_CODE, K1A 0A6}
+            locale: ${FLIPP_LOCALE, en-us}
+            map_center_lat: ${MAP_CENTER_LAT, 45.4215}
+            map_center_lng: ${MAP_CENTER_LNG, -75.6972}
+
+      session_service:
+        type: ${PERSISTENCE_TYPE, memory}
+        database_url: ${CUSTOM_AGENT_DATABASE_URL,}
+
+      artifact_service: *default_artifact_service
+
+      agent_card:
+        description: >
+          Plans the optimal grocery shopping route across multiple stores using a
+          weighted scoring algorithm. Considers price, convenience (fewer stores),
+          item coverage, and travel distance to find the best combination of stores
+          to visit. Use this agent when the user has a list of grocery items and wants
+          to know "where should I shop?", "what's the best route?", "plan my grocery
+          trip", "optimize my shopping", or needs to buy all items on a list at the
+          best prices with minimal stops. Works with Flipp flyer data - no API key needed.
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "route_optimization"
+            name: "Shopping Route Optimizer"
+            description: "Find the optimal combination of stores to buy all grocery items at the best prices with minimal travel."
+
+      agent_card_publishing:
+        interval_seconds: 10
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["OrchestratorAgent", "ShopperAgent", "RecipeResearchAgent"]
+        request_timeout_seconds: 120

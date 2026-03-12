@@ -7,10 +7,6 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk import trace, set_tag
 from typing import Any, Dict, Optional, List
 
-try:
-    from tool_execution_logger import logged_tool
-except ImportError:  # pragma: no cover
-    from src.tool_execution_logger import logged_tool
 
 log = logging.getLogger(__name__)
 
@@ -18,26 +14,24 @@ log = logging.getLogger(__name__)
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn and sentry_dsn.startswith("https"):
     try:
-        # FILTER: Drop noisy events (blue dots) that aren't real errors
         def filter_noise(event, hint):
-            # If it's just a log message (not an exception) and level is INFO/DEBUG, drop it.
             if 'exception' not in event and event.get('level') in ['info', 'debug']:
                 return None
             return event
 
         sentry_logging = LoggingIntegration(
-            level=logging.INFO,        # Breadcrumbs (Timeline)
-            event_level=logging.ERROR  # Issues (Alerts)
+            level=logging.INFO,
+            event_level=logging.ERROR
         )
-        
+
         sentry_sdk.init(
             dsn=sentry_dsn,
             integrations=[sentry_logging],
-            traces_sample_rate=1.0, 
-            profiles_sample_rate=1.0, 
+            traces_sample_rate=1.0,
+            profiles_sample_rate=1.0,
             environment="hackathon-demo",
             send_default_pii=True,
-            before_send=filter_noise 
+            before_send=filter_noise
         )
         log.info("[ShopperTools] Sentry Initialized (Performance + Tagging Enabled).")
     except Exception as e:
@@ -45,12 +39,11 @@ if sentry_dsn and sentry_dsn.startswith("https"):
 else:
     log.warning("[ShopperTools] Sentry DSN not found or invalid. Skipping initialization.")
 
-# List of common grocery chains in Ottawa to prioritize and validate
-OTTAWA_GROCERS = [
-    "metro", "loblaws", "walmart", "real canadian superstore", "farm boy", 
-    "freshco", "food basics", "sobeys", "your independent grocer", "adoni", 
-    "whole foods", "giant tiger", "costco", "t&t"
-]
+FLIPP_SEARCH_URL = "https://backflipp.wishabi.com/flipp/items/search"
+NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+
+# In-memory geocode cache to avoid redundant Nominatim lookups
+_geocode_cache: Dict[str, Optional[Dict[str, float]]] = {}
 
 def safe_set_tag(key: str, value: Any):
     """Safely sets a Sentry tag, ignoring errors if Sentry is not ready."""
@@ -60,193 +53,137 @@ def safe_set_tag(key: str, value: Any):
     except Exception:
         pass
 
-@logged_tool("shopper.check_local_flyers")
+
+def _parse_flipp_items(raw_items: list, limit: int = 5) -> List[Dict[str, Any]]:
+    """Parse raw Flipp API response items into a clean deal format.
+
+    Flipp returns two item types:
+    - flyer items: from weekly flyers (have merchant_name, sale_story, valid_from/to)
+    - ecom items: online store listings (have merchant, description)
+    """
+    deals = []
+    for item in raw_items:
+        if len(deals) >= limit:
+            break
+
+        # Extract price info
+        price = item.get("current_price")
+        pre_price_text = item.get("pre_price_text") or ""
+        post_price_text = item.get("post_price_text") or ""
+
+        if price is not None:
+            display_price = f"${price:.2f}"
+            if post_price_text:
+                display_price += f" {post_price_text}"
+        else:
+            display_price = "See flyer"
+
+        # Resolve store name: flyer items use merchant_name, ecom items use merchant
+        store = item.get("merchant_name") or item.get("merchant") or "Unknown Store"
+
+        # Get image URL
+        image_url = item.get("clean_image_url") or item.get("clipping_image_url") or item.get("image_url", "")
+
+        deals.append({
+            "store": store,
+            "item": item.get("name") or item.get("description") or "Unknown Item",
+            "price": display_price,
+            "original_price": f"${item['original_price']:.2f}" if item.get("original_price") else None,
+            "sale_story": item.get("sale_story", ""),
+            "valid_from": item.get("valid_from", ""),
+            "valid_to": item.get("valid_to", ""),
+            "image_url": image_url,
+            "item_type": item.get("item_type", ""),
+        })
+
+    return deals
+
+
+async def _geocode_store(
+    store_name: str,
+    center_lat: float,
+    center_lng: float,
+    client: httpx.AsyncClient,
+) -> Optional[Dict[str, float]]:
+    """Geocode a store using Nominatim with a viewbox bounded to ~30km around the center.
+
+    The viewbox + bounded=1 constrains results to the local area, so we get
+    the actual nearby branch instead of a random location for the chain.
+    """
+    cache_key = f"{store_name}|{center_lat:.2f},{center_lng:.2f}"
+    if cache_key in _geocode_cache:
+        return _geocode_cache[cache_key]
+
+    # ~0.3 degrees ≈ 30km bounding box around center
+    OFFSET = 0.3
+    viewbox = f"{center_lng - OFFSET},{center_lat + OFFSET},{center_lng + OFFSET},{center_lat - OFFSET}"
+
+    try:
+        params = {
+            "q": store_name,
+            "format": "json",
+            "limit": "1",
+            "countrycodes": "ca",
+            "viewbox": viewbox,
+            "bounded": "1",
+        }
+        headers = {"User-Agent": "SmartAppetiteManager/1.0 (hackathon project)"}
+        resp = await client.get(NOMINATIM_SEARCH_URL, params=params, headers=headers)
+        resp.raise_for_status()
+        results = resp.json()
+
+        if results:
+            coords = {"lat": float(results[0]["lat"]), "lng": float(results[0]["lon"])}
+            _geocode_cache[cache_key] = coords
+            return coords
+
+    except Exception as e:
+        log.warning(f"[ShopperTools] Geocode failed for '{store_name}': {e}")
+
+    _geocode_cache[cache_key] = None
+    return None
+
+
 @trace
 async def check_local_flyers(
     item_name: str,
-    location: str = "Ottawa, Ontario, Canada", 
+    location: str = "Ottawa, Ontario, Canada",
     limit: int = 5,
     tool_context: Optional[Any] = None,
     tool_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Fetches real-time local grocery deals with strict Ottawa-centric filtering."""
+    """Search Flipp for current grocery flyer deals on an item near the user's postal code."""
     safe_set_tag("search_item", item_name)
     safe_set_tag("search_type", "flyer")
-    log.info(f"[ShopperTools] Checking flyers for: {item_name}")
-    
-    api_key = tool_config.get("serpapi_key") if tool_config else None
-    if not api_key:
-        return {"status": "error", "message": "SerpApi key is missing."}
+    log.info(f"[ShopperTools] Checking Flipp flyers for: {item_name}")
 
-    # Query specifically for 'flyer' and 'on sale' to trigger local flyer data
+    postal_code = (tool_config.get("postal_code") if tool_config else None) or "K1A 0A6"
+    locale = (tool_config.get("locale") if tool_config else None) or "en-us"
+
     params = {
-        "engine": "google_shopping",
-        "q": f"{item_name} flyer sale", # Try precise query first
-        "location": location,
-        "gl": "ca",          
-        "hl": "en",          
-        "on_sale": "1",      
-        "num": "20",       
-        "api_key": api_key
+        "locale": locale,
+        "postal_code": postal_code,
+        "q": item_name,
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("https://serpapi.com/search.json", params=params)
-             
-            # If the specific location failed, try falling back
-            if resp.status_code != 200 and location != "Ottawa, Ontario, Canada":
-                 params["location"] = "Ottawa, Ontario, Canada"
-                 resp = await client.get("https://serpapi.com/search.json", params=params)
-
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(FLIPP_SEARCH_URL, params=params)
             resp.raise_for_status()
-            results = resp.json().get("shopping_results", [])
-            
-            # FALLBACK: If strict flyer search yielded nothing, try broad local search
-            if not results:
-                log.info(f"[ShopperTools] No strict flyer deals for {item_name}. Retrying with broad local search...")
-                params["on_sale"] = "0" # Remove sale filter
-                params["q"] = item_name # Remove 'flyer' keyword to get general inventory
-                resp = await client.get("https://serpapi.com/search.json", params=params)
-                resp.raise_for_status()
-                results = resp.json().get("shopping_results", [])
-
-        if not results:
-            return {"status": "not_found", "message": f"No sales found for {item_name}."}
-
-        def is_valid_deal(deal):
-            source = deal.get("source", "").lower()
-            title = deal.get("title", "").lower()
-            
-            # 1. Broad online/non-local blocklist
-            blocked_sources = [
-                "alibaba", "aliexpress", "ebay", "etsy", "amazon", "temu", "ubuy", 
-                "wayfair", "spud.ca", "well.ca", "staples", "snapklik", "floral acres",
-                "save-on-foods", "t&t" 
-            ]
-            if any(blocked in source for blocked in blocked_sources):
-                return False
-
-            # 2. Block non-food/specialty keywords
-            blocked_keywords = [
-                "plant", "seed", "tree", "wholesale", "bulk 1000kg", "dried", 
-                "powder", "extract", "artificial", "chocolate covered", "toy"
-            ]
-            if any(keyword in title for keyword in blocked_keywords):
-                return False
-                
-            return True
-
-        deals_found = []
-        for deal in results:
-            if len(deals_found) >= limit: break
-            if is_valid_deal(deal):
-                # CLEANUP: Remove .ca/.com from store names for display
-                raw_store = deal.get("source", "")
-                clean_store = raw_store.replace(".ca", "").replace(".com", "").strip()
-                
-                deals_found.append({
-                    "store": clean_store,
-                    "price": deal.get("price"),
-                    "item": deal.get("title"),
-                    "link": deal.get("product_link"),
-                    "snippet": deal.get("snippet", "") # Pass description to help find Quantity
-                })
-            
-        return {"status": "success", "deals": deals_found}
-
-    except Exception as e:
-        log.error(f"[ShopperTools] API failure: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
-
-@logged_tool("shopper.get_standard_price")
-@trace
-async def get_standard_price(
-    item_name: str,
-    location: str = "Ottawa, Ontario, Canada",
-    tool_config: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Fetches key injected from YAML for standard price lookup."""
-    safe_set_tag("search_item", item_name)
-    safe_set_tag("search_type", "standard_price")
-    log.info(f"[ShopperTools] Checking standard price for: {item_name}")
-    api_key = tool_config.get("serpapi_key") if tool_config else None
-    if not api_key:
-        return {"status": "error", "message": "SerpApi key is missing."}
-
-    # Configure the search parameters (no sale filter)
-    params = {
-        "engine": "google_shopping",
-        "q": f"{item_name} grocery",
-        "location": location,
-        "gl": "ca",
-        "hl": "en",
-        "api_key": api_key
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("https://serpapi.com/search.json", params=params)
-            resp.raise_for_status()
-            results = resp.json().get("shopping_results", [])
-
-        if not results:
-            return {"status": "not_found", "message": f"No standard price found for {item_name}."}
-
-        # Use the first result as a baseline
-        baseline = results[0]
-        return {
-            "status": "success",
-            "average_price": baseline.get("price"),
-            "item": baseline.get("title"),
-            "source": "Google Shopping Estimate"
-        }
-
-    except Exception as e:
-        log.error(f"[ShopperTools] Standard Price Check failed: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
-
-@logged_tool("shopper.find_nearest_store_address")
-@trace
-async def find_nearest_store_address(
-    store_name: str,
-    location: str,
-    tool_config: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
-    """Finds the address and ensures it is actually in Ottawa."""
-    safe_set_tag("search_item", store_name)
-    safe_set_tag("search_type", "store_address")
-    api_key = tool_config.get("serpapi_key") if tool_config else None
-    if not api_key: return None
-    
-    params = {
-        "engine": "google_maps",
-        "q": f"{store_name} near {location}",
-        "type": "search",
-        "api_key": api_key
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("https://serpapi.com/search.json", params=params)
             data = resp.json()
-            local_results = data.get("local_results", [])
-            
-            if local_results:
-                address = local_results[0].get("address", "")
-                
-                # RELAXED LOCATION FILTER: Check for Ottawa and surrounding areas
-                accepted_cities = ["ottawa", "nepean", "kanata", "gloucester", "orleans", "vanier", "barrhaven", "stittsville", "gatineau"]
-                address_lower = address.lower()
-                
-                if any(city in address_lower for city in accepted_cities):
-                    return address
-                    
-    except Exception as e:
-        log.warning(f"[ShopperTools] Address lookup failed: {e}")
-    return None
 
-@logged_tool("shopper.find_best_deals_batch")
+        raw_items = data.get("items", [])
+        if not raw_items:
+            return {"status": "not_found", "message": f"No flyer deals found for '{item_name}'."}
+
+        deals = _parse_flipp_items(raw_items, limit=limit)
+        return {"status": "success", "deals": deals}
+
+    except Exception as e:
+        log.error(f"[ShopperTools] Flipp API failure: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
 @trace
 async def find_best_deals_batch(
     items: List[str],
@@ -254,46 +191,154 @@ async def find_best_deals_batch(
     tool_context: Optional[Any] = None,
     tool_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Orchestrates batch search with strict geographical verification."""
+    """Search Flipp for the best deals on a list of grocery items, returning results per item."""
     try:
         safe_set_tag("batch_size", len(items))
         safe_set_tag("search_type", "batch")
+
+        postal_code = (tool_config.get("postal_code") if tool_config else None) or "K1A 0A6"
+        locale = (tool_config.get("locale") if tool_config else None) or "en-us"
+
         results = {}
-        address_cache = {}
-        
-        for item in items:
-            response = await check_local_flyers(item, location, limit=5, tool_config=tool_config)
-            
-            if response.get("status") == "success":
-                enriched_deals = []
-                for deal in response.get("deals", []):
-                    store_name = deal.get("store")
-                    
-                    if store_name in address_cache:
-                        address = address_cache[store_name]
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for item in items:
+                params = {
+                    "locale": locale,
+                    "postal_code": postal_code,
+                    "q": item,
+                }
+                try:
+                    resp = await client.get(FLIPP_SEARCH_URL, params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    raw_items = data.get("items", [])
+
+                    if raw_items:
+                        deals = _parse_flipp_items(raw_items, limit=5)
+                        results[item] = {"found": True, "options": deals}
                     else:
-                        address = await find_nearest_store_address(store_name, location, tool_config)
-                        address_cache[store_name] = address
+                        results[item] = {"found": False, "note": f"No flyer deals found for '{item}'."}
 
-                    # ONLY include deals with a verified Ottawa address
-                    if address:
-                        enriched_deals.append({
-                            "store": store_name,
-                            "address": address,
-                            "price": deal.get("price"),
-                            "item_title": deal.get("item"),
-                            "link": deal.get("product_link")
-                        })
+                except Exception as e:
+                    log.warning(f"[ShopperTools] Flipp search failed for '{item}': {e}")
+                    results[item] = {"found": False, "note": f"Search failed: {str(e)}"}
 
-                if enriched_deals:
-                    results[item] = {"found": True, "options": enriched_deals}
-                else:
-                    results[item] = {"found": False, "note": "No verified local Ottawa deals found."}
-            else:
-                results[item] = {"found": False, "note": "No flyer deals found."}
-
-        return {"status": "success", "summary": results, "location_used": location}
+        return {"status": "success", "summary": results, "location_used": location, "postal_code": postal_code}
 
     except Exception as e:
         log.error(f"[ShopperTools] Batch search failed: {e}", exc_info=True)
         return {"status": "error", "message": f"Batch search failed: {str(e)}"}
+
+
+@trace
+async def find_deals_with_map(
+    items: List[str],
+    location: str = "Ottawa, Ontario, Canada",
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Search Flipp for deals on a list of grocery items, then geocode stores for map display.
+
+    Returns deal results per item plus a shopper_map_data structure with store
+    coordinates for rendering an interactive map on the frontend.
+    """
+    try:
+        safe_set_tag("batch_size", len(items))
+        safe_set_tag("search_type", "batch_map")
+
+        postal_code = (tool_config.get("postal_code") if tool_config else None) or "K1A 0A6"
+        locale = (tool_config.get("locale") if tool_config else None) or "en-us"
+        map_center_lat = float(tool_config.get("map_center_lat", 45.4215)) if tool_config else 45.4215
+        map_center_lng = float(tool_config.get("map_center_lng", -75.6972)) if tool_config else -75.6972
+
+        results = {}
+        # Track which stores carry which items + best price
+        store_items: Dict[str, Dict[str, Any]] = {}  # store_name -> {items: [...], total: float}
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for item in items:
+                params = {"locale": locale, "postal_code": postal_code, "q": item}
+                try:
+                    resp = await client.get(FLIPP_SEARCH_URL, params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    raw_items = data.get("items", [])
+
+                    if raw_items:
+                        deals = _parse_flipp_items(raw_items, limit=5)
+                        results[item] = {"found": True, "options": deals}
+
+                        # Track best (cheapest) price per store for this item
+                        best_per_store: Dict[str, Dict[str, Any]] = {}
+                        for deal in deals:
+                            store = deal["store"]
+                            price_val = 0.0
+                            price_str = deal.get("price", "")
+                            try:
+                                price_val = float(price_str.replace("$", "").split()[0])
+                            except (ValueError, IndexError):
+                                pass
+                            if store not in best_per_store or price_val < best_per_store[store]["price_val"]:
+                                best_per_store[store] = {
+                                    "name": item,
+                                    "price": deal["price"],
+                                    "sale_story": deal.get("sale_story", ""),
+                                    "price_val": price_val,
+                                }
+                        for store, best in best_per_store.items():
+                            if store not in store_items:
+                                store_items[store] = {"items": [], "total": 0.0}
+                            store_items[store]["items"].append({
+                                "name": best["name"],
+                                "price": best["price"],
+                                "sale_story": best["sale_story"],
+                            })
+                            store_items[store]["total"] += best["price_val"]
+                    else:
+                        results[item] = {"found": False, "note": f"No flyer deals found for '{item}'."}
+
+                except Exception as e:
+                    log.warning(f"[ShopperTools] Flipp search failed for '{item}': {e}")
+                    results[item] = {"found": False, "note": f"Search failed: {str(e)}"}
+
+            # Determine recommended store (most items, then lowest total)
+            recommended_store = None
+            if store_items:
+                recommended_store = max(
+                    store_items.keys(),
+                    key=lambda s: (len(store_items[s]["items"]), -store_items[s]["total"])
+                )
+
+            # Geocode unique stores (with 1s delay between requests per Nominatim policy)
+            store_locations = []
+            for store_name, store_data in store_items.items():
+                coords = await _geocode_store(store_name, map_center_lat, map_center_lng, client)
+                if coords:
+                    store_locations.append({
+                        "store": store_name,
+                        "lat": coords["lat"],
+                        "lng": coords["lng"],
+                        "items": store_data["items"],
+                        "total": round(store_data["total"], 2),
+                        "is_recommended": store_name == recommended_store,
+                    })
+                    await asyncio.sleep(1.1)  # Nominatim rate limit
+
+        shopper_map_data = {
+            "stores": store_locations,
+            "center": {"lat": map_center_lat, "lng": map_center_lng},
+            "recommended_store": recommended_store,
+        }
+
+        return {
+            "status": "success",
+            "summary": results,
+            "shopper_map_data": shopper_map_data,
+            "location_used": location,
+            "postal_code": postal_code,
+        }
+
+    except Exception as e:
+        log.error(f"[ShopperTools] Batch map search failed: {e}", exc_info=True)
+        return {"status": "error", "message": f"Batch map search failed: {str(e)}"}

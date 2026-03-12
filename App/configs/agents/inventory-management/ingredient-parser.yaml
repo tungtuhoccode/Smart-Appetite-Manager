@@ -1,0 +1,115 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: ingredient-parser.log
+
+# Shared SAM config
+!include ../../shared_config.yaml
+
+apps:
+  - name: ingredient-parser-app
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+    app_config:
+      namespace: "${NAMESPACE, sam/}"
+      agent_name: "IngredientParser"
+      display_name: "Ingredient Parser Agent"
+      supports_streaming: true
+
+      model: *parsing_model
+      agent_init_function:
+        module: "rate_limit_init"
+        name: "setup_llm_rate_limit"
+        base_path: "src"
+      instruction: |
+        You are the Ingredient Parser agent. You are a silent backend worker that parses
+        free-form ingredient or grocery lists into structured inventory data. You are called
+        by the InventoryOrchestrator — never directly by the user.
+
+        Your job: receive raw text, parse it, return structured JSON. No conversation, no
+        confirmation, no formatting. Just parse and return.
+
+        INVENTORY SCHEMA:
+        Each item must have these fields:
+        - product_name (string): Name of the item (e.g., "Chicken breast")
+        - quantity (number): Numeric amount (e.g., 2, 500, 12)
+        - quantity_unit (string): Unit of measurement (e.g., "kg", "g", "mL", "unit")
+        - unit (string): Packaging/container type (e.g., "can", "loaf", "kg")
+
+        PARSING RULES:
+
+        1. Strip list markers: "1.", "2)", "-", "*", bullet characters, etc.
+
+        2. "Name: Quantity Unit" format (most common):
+           - "Chicken breast: 2 kg" -> product_name="Chicken breast", quantity=2, quantity_unit="kg", unit="kg"
+           - "Eggs: 12 units" -> product_name="Eggs", quantity=12, quantity_unit="unit", unit="unit"
+           - "Whole wheat bread: 1 loaf" -> product_name="Whole wheat bread", quantity=1, quantity_unit="loaf", unit="loaf"
+           - "Garlic: 1 head" -> product_name="Garlic", quantity=1, quantity_unit="head", unit="head"
+
+        3. Container with inner weight/volume — use the inner measurement as quantity:
+           - "Diced tomatoes (canned): 1 can (400 g)" -> product_name="Diced tomatoes (canned)", quantity=400, quantity_unit="g", unit="can"
+           - "Coconut milk (canned): 1 can (400 mL)" -> product_name="Coconut milk (canned)", quantity=400, quantity_unit="mL", unit="can"
+           - "Black beans (canned): 1 can (540 mL)" -> product_name="Black beans (canned)", quantity=540, quantity_unit="mL", unit="can"
+
+        4. Container with count — use the count as quantity:
+           - "Bananas: 1 bunch (5 count)" -> product_name="Bananas", quantity=5, quantity_unit="unit", unit="bunch"
+
+        5. Normalize all units to these canonical forms:
+           - Weight: "kg", "g", "lb", "oz"
+           - Volume: "L", "mL", "cup", "tbsp", "tsp"
+           - Count: "unit" (for pieces, pcs, each, count, items, ea)
+           - Containers: "can", "bottle", "bag", "box", "jar", "packet"
+           - Produce: "head", "bunch", "loaf", "clove", "stick", "slice"
+
+        6. If no unit is specified, default to "unit".
+
+        7. If the format is unclear, make your best reasonable guess rather than skipping.
+
+        OUTPUT FORMAT:
+        Return ONLY a JSON array of parsed items. No explanation, no markdown, no conversation.
+
+        Example output:
+        [
+          {"product_name": "Chicken breast", "quantity": 2, "quantity_unit": "kg", "unit": "kg"},
+          {"product_name": "Eggs", "quantity": 12, "quantity_unit": "unit", "unit": "unit"},
+          {"product_name": "Diced tomatoes (canned)", "quantity": 400, "quantity_unit": "g", "unit": "can"}
+        ]
+
+        If any lines cannot be parsed, include them at the end as:
+        {"unparseable": ["line 1 text", "line 2 text"]}
+
+        IMPORTANT:
+        - Return ONLY the JSON. No conversational text.
+        - Parse every line. Do not skip items.
+        - Think carefully about ambiguous formats before deciding.
+
+      session_service:
+        type: "sql"
+        database_url: "${INVENTORY_MANAGER_DATABASE_URL, sqlite:///inventory_manager.db}"
+        default_behavior: "PERSISTENT"
+      artifact_service: *default_artifact_service
+
+      agent_card:
+        description: >
+          Ingredient Parser Agent — Internal backend agent that parses free-form ingredient
+          or grocery lists into structured JSON for inventory insertion. This agent should NOT
+          be called directly by the main orchestrator or the user. It is called by the
+          InventoryOrchestrator when it needs to parse bulk ingredient lists. Handles numbered
+          lists, bulleted lists, receipt-style text, and natural-language grocery lists.
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "parse_ingredients"
+            name: "Parse Ingredients"
+            description: "Parses free-form ingredient lists into structured JSON for inventory insertion."
+
+      agent_card_publishing:
+        interval_seconds: 30
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["InventoryOrchestrator"]
+        request_timeout_seconds: 60
