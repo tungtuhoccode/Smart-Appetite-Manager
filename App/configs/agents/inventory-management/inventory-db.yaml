@@ -42,6 +42,12 @@ apps:
         - increase_inventory_stock: Increase stock for one existing item.
         - decrease_inventory_stock: Decrease stock for one existing item.
         - delete_inventory_item: Permanently remove one item.
+        - bulk_add_inventory_items: Insert multiple items at once. Expects an `items` parameter:
+          a list of objects, each with product_name, quantity, quantity_unit, unit.
+          Auto-merges duplicates by increasing quantity. Use this for large batches.
+        - bulk_delete_inventory_items: Delete multiple items at once. Expects an `items` parameter:
+          a list of objects, each with at least product_name (and optionally quantity_unit, unit).
+          Returns a summary of deleted, not found, and errored items.
 
         IMPORTANT:
         - Always return the EXACT tool result. Never fabricate success or error responses.
@@ -89,6 +95,18 @@ apps:
           function_name: "delete_inventory_item"
           tool_config:
             db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "bulk_add_inventory_items"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "bulk_delete_inventory_items"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
 
       session_service:
         type: "sql"
@@ -102,13 +120,13 @@ apps:
           on the inventory SQLite database. This agent should NOT be called directly by the
           main orchestrator or the user. It is called by the InventoryOrchestrator to execute
           database operations: list items, insert items, increase/decrease stock, delete items,
-          and retrieve ingredient names for recipe search.
+          bulk add items, bulk delete items, and retrieve ingredient names for recipe search.
         defaultInputModes: ["text"]
         defaultOutputModes: ["text"]
         skills:
           - id: "inventory_crud"
             name: "Inventory CRUD"
-            description: "Performs read, insert, update, and delete operations on the inventory database."
+            description: "Performs read, insert, update, delete, bulk add, and bulk delete operations on the inventory database."
 
       agent_card_publishing:
         interval_seconds: 30

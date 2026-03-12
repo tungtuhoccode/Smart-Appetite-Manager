@@ -64,7 +64,7 @@ apps:
 
         6. If no unit is specified, default to "unit".
 
-        7. If the format is unclear, make your best reasonable guess rather than skipping.
+        7. If the format is unclear or the request is ambiguous (for example: Adding some instead of specifying the exact quantity) report back to the inventory orchestrator.
 
         OUTPUT FORMAT:
         Return ONLY a JSON array of parsed items. No explanation, no markdown, no conversation.

@@ -69,6 +69,11 @@ apps:
            2. Send to InventoryDB
            3. Report result
 
+        F) User wants to DELETE MULTIPLE items at once:
+           1. Present the list of items to be deleted and ask for confirmation
+           2. Send items list to InventoryDB's bulk_delete_inventory_items
+           3. Report summary (deleted count, not found, errors)
+
         INVENTORY SCHEMA (for your reference when parsing simple items):
         Each item has: product_name (string), quantity (number), quantity_unit (string), unit (string).
         Canonical units — Weight: kg, g, lb, oz | Volume: L, mL, cup, tbsp, tsp
@@ -76,14 +81,12 @@ apps:
         Produce: head, bunch, loaf, clove
 
         CONFIRMATION RULES:
-        - Before ANY mutation (insert, increase, decrease, delete), present your interpretation
-          and ask the user for explicit confirmation.
+        - Before ANY mutation (insert, increase, decrease, delete), present your interpretation and ask the user for explicit confirmation.
         - If the request is ambiguous, ask a clarifying question first.
         - Never mutate data without user approval.
 
         ERROR HANDLING:
-        - If IngredientParser returns an error or unparseable items, tell the user which items
-          failed and ask for clarification.
+        - If IngredientParser returns an error or unparseable items, tell the user which items failed and ask for clarification.
         - If InventoryDB returns an error, relay the EXACT error message to the user.
         - After reporting an error, stop and wait for user guidance. Do not retry automatically.
 

@@ -690,6 +690,123 @@ async def delete_inventory_item(
             pass
 
 
+async def bulk_add_inventory_items(
+    items: List[Dict[str, Any]],
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Bulk-add multiple inventory items at once.
+
+    Each item should include: product_name, quantity, quantity_unit, unit.
+    If an item already exists (same product_name + quantity_unit + unit),
+    quantity is increased instead of inserting a duplicate row.
+    This is identical to insert_inventory_items but named explicitly for bulk operations.
+    """
+    return await insert_inventory_items(
+        items=items, tool_context=tool_context, tool_config=tool_config
+    )
+
+
+async def bulk_delete_inventory_items(
+    items: List[Dict[str, Any]],
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Delete multiple inventory items at once.
+
+    Each item in the list should include at least product_name, and optionally
+    quantity_unit and unit for precise matching. Returns a summary of how many
+    items were deleted, not found, or had errors.
+    """
+    log_id = "[InventoryTools:bulk_delete_inventory_items]"
+    db_path = _get_db_path(tool_config)
+    if not db_path:
+        return _error_response("bulk_delete", "Missing db_path in tool_config.")
+
+    if not items:
+        return _error_response("bulk_delete", "No items provided.")
+
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _open_sqlite(db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        deleted = 0
+        not_found = 0
+        errored = 0
+        details: List[Dict[str, Any]] = []
+
+        for idx, raw_item in enumerate(items):
+            if not isinstance(raw_item, dict):
+                errored += 1
+                details.append({"index": idx, "status": "error", "message": f"Expected object, got {type(raw_item).__name__}."})
+                continue
+
+            product_name = _normalize_text(
+                _first_non_empty(raw_item, ["product_name", "product", "name", "item_name", "item"])
+            )
+            if not product_name:
+                errored += 1
+                details.append({"index": idx, "status": "error", "message": "Missing product_name."})
+                continue
+
+            quantity_unit = _canonicalize_unit_token(
+                _normalize_text(_first_non_empty(raw_item, ["quantity_unit", "quantityUnit", "uom", "measure"]))
+            )
+            unit = _canonicalize_unit_token(
+                _normalize_text(_first_non_empty(raw_item, ["unit", "package", "packaging"]))
+            )
+
+            existing, lookup_error = _find_existing_inventory_row_with_fallback(
+                cur=cur,
+                product_name=product_name,
+                quantity_unit=quantity_unit,
+                unit=unit,
+            )
+            if lookup_error:
+                errored += 1
+                details.append({"index": idx, "product_name": product_name, "status": "error", "message": lookup_error})
+                continue
+            if not existing:
+                not_found += 1
+                details.append({"index": idx, "product_name": product_name, "status": "not_found"})
+                continue
+
+            cur.execute("DELETE FROM inventory WHERE id = ?", (existing["id"],))
+            deleted += 1
+            details.append({
+                "index": idx,
+                "product_name": existing["product_name"],
+                "status": "deleted",
+                "id": existing["id"],
+            })
+
+        conn.commit()
+        log.info(f"{log_id} Deleted {deleted}, not_found {not_found}, errored {errored}")
+        return {
+            "status": "success",
+            "deleted": deleted,
+            "not_found": not_found,
+            "errored": errored,
+            "processed": len(items),
+            "details": details[:50],
+        }
+    except sqlite3.Error as e:
+        log.error(f"{log_id} SQLite error: {e}", exc_info=True)
+        return _error_response("bulk_delete", f"SQLite error: {e}")
+    except Exception as e:
+        log.error(f"{log_id} Unexpected error: {e}", exc_info=True)
+        return _error_response("bulk_delete", f"Unexpected error: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 async def get_ingredient_names(
     tool_context: Optional[Any] = None,
     tool_config: Optional[Dict[str, Any]] = None,
