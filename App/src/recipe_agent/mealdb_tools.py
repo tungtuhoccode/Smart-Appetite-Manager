@@ -20,7 +20,6 @@ else:
 
 SPOONACULAR_BASE = "https://api.spoonacular.com"
 
-
 class SpoonacularError(RuntimeError):
     """Raised when Spoonacular request setup/call fails."""
 
