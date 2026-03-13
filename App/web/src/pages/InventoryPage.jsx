@@ -12,14 +12,6 @@ import { EditItemDialog } from "@/components/inventory/EditItemDialog";
 import { DeleteItemDialog } from "@/components/inventory/DeleteItemDialog";
 import { AssistantPanel } from "@/components/assistant/AssistantPanel";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { CATEGORIES } from "@/lib/categoryConfig";
-import {
   MessageCircleIcon,
   RefreshCwIcon,
   PlusIcon,
@@ -128,22 +120,6 @@ export default function InventoryPage() {
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-xl">Items</CardTitle>
               <div className="flex items-center gap-2">
-                <Select
-                  value={inventory.categoryFilter}
-                  onValueChange={inventory.setCategoryFilter}
-                >
-                  <SelectTrigger className="w-[150px] h-8 text-sm">
-                    <SelectValue placeholder="Category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="All">All Categories</SelectItem>
-                    {CATEGORIES.map((cat) => (
-                      <SelectItem key={cat.value} value={cat.value}>
-                        {cat.value}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 <Button
                   variant="outline"
                   size="sm"
@@ -182,6 +158,9 @@ export default function InventoryPage() {
               onToggleSort={inventory.toggleSort}
               newItemKeys={inventory.newItemKeys}
               itemKey={inventory.itemKey}
+              categoryFilter={inventory.categoryFilter}
+              onCategoryFilterChange={inventory.setCategoryFilter}
+              allItems={inventory.allItems}
             />
           </CardContent>
         </Card>

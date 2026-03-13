@@ -54,7 +54,52 @@ def safe_set_tag(key: str, value: Any):
         pass
 
 
-def _parse_flipp_items(raw_items: list, limit: int = 5) -> List[Dict[str, Any]]:
+_NON_GROCERY_KEYWORDS = {
+    "dog", "cat", "pet", "puppy", "kitten", "feline", "canine",
+    "bird", "fish tank", "aquarium", "reptile", "hamster",
+}
+
+_NON_GROCERY_STORES = {
+    "pet valu", "petsmart", "petland", "global pet foods", "ren's pets",
+}
+
+
+def _is_relevant_deal(item: dict, query: str) -> bool:
+    """Check whether a Flipp result is actually relevant to the search query.
+
+    Flipp returns fuzzy matches that are often wrong (e.g. "black pepper" returns
+    "sweet peppers", "chicken broth" returns pet food). This filters by:
+    1. Requiring all significant query words in the item name/description
+    2. Excluding pet stores and pet-food keywords
+    """
+    item_name = (item.get("name") or "").lower()
+    item_desc = (item.get("description") or "").lower()
+    item_text = f"{item_name} {item_desc}"
+
+    # Skip items with no name
+    if not item_text.strip():
+        return False
+
+    # Exclude pet stores
+    store = (item.get("merchant_name") or item.get("merchant") or "").lower()
+    if store in _NON_GROCERY_STORES:
+        return False
+
+    # Exclude items with pet-food keywords
+    for kw in _NON_GROCERY_KEYWORDS:
+        if kw in item_text:
+            return False
+
+    # All significant words from the query must appear in the item text.
+    # Split query into words, ignore very short words (a, of, etc.)
+    query_words = [w for w in query.lower().split() if len(w) > 2]
+    if not query_words:
+        return True
+
+    return all(word in item_text for word in query_words)
+
+
+def _parse_flipp_items(raw_items: list, limit: int = 5, query: str = "") -> List[Dict[str, Any]]:
     """Parse raw Flipp API response items into a clean deal format.
 
     Flipp returns two item types:
@@ -65,6 +110,10 @@ def _parse_flipp_items(raw_items: list, limit: int = 5) -> List[Dict[str, Any]]:
     for item in raw_items:
         if len(deals) >= limit:
             break
+
+        # Skip results that don't actually match the searched item
+        if query and not _is_relevant_deal(item, query):
+            continue
 
         # Extract price info
         price = item.get("current_price")
@@ -89,6 +138,8 @@ def _parse_flipp_items(raw_items: list, limit: int = 5) -> List[Dict[str, Any]]:
             "item": item.get("name") or item.get("description") or "Unknown Item",
             "price": display_price,
             "original_price": f"${item['original_price']:.2f}" if item.get("original_price") else None,
+            "pre_price_text": pre_price_text,
+            "post_price_text": post_price_text,
             "sale_story": item.get("sale_story", ""),
             "valid_from": item.get("valid_from", ""),
             "valid_to": item.get("valid_to", ""),
@@ -176,7 +227,9 @@ async def check_local_flyers(
         if not raw_items:
             return {"status": "not_found", "message": f"No flyer deals found for '{item_name}'."}
 
-        deals = _parse_flipp_items(raw_items, limit=limit)
+        deals = _parse_flipp_items(raw_items, limit=limit, query=item_name)
+        if not deals:
+            return {"status": "not_found", "message": f"No relevant flyer deals found for '{item_name}'."}
         return {"status": "success", "deals": deals}
 
     except Exception as e:
@@ -215,8 +268,11 @@ async def find_best_deals_batch(
                     raw_items = data.get("items", [])
 
                     if raw_items:
-                        deals = _parse_flipp_items(raw_items, limit=5)
-                        results[item] = {"found": True, "options": deals}
+                        deals = _parse_flipp_items(raw_items, limit=5, query=item)
+                        if deals:
+                            results[item] = {"found": True, "options": deals}
+                        else:
+                            results[item] = {"found": False, "note": f"No relevant flyer deals found for '{item}'."}
                     else:
                         results[item] = {"found": False, "note": f"No flyer deals found for '{item}'."}
 
@@ -266,35 +322,38 @@ async def find_deals_with_map(
                     raw_items = data.get("items", [])
 
                     if raw_items:
-                        deals = _parse_flipp_items(raw_items, limit=5)
-                        results[item] = {"found": True, "options": deals}
+                        deals = _parse_flipp_items(raw_items, limit=5, query=item)
+                        if deals:
+                            results[item] = {"found": True, "options": deals}
 
-                        # Track best (cheapest) price per store for this item
-                        best_per_store: Dict[str, Dict[str, Any]] = {}
-                        for deal in deals:
-                            store = deal["store"]
-                            price_val = 0.0
-                            price_str = deal.get("price", "")
-                            try:
-                                price_val = float(price_str.replace("$", "").split()[0])
-                            except (ValueError, IndexError):
-                                pass
-                            if store not in best_per_store or price_val < best_per_store[store]["price_val"]:
-                                best_per_store[store] = {
-                                    "name": item,
-                                    "price": deal["price"],
-                                    "sale_story": deal.get("sale_story", ""),
-                                    "price_val": price_val,
-                                }
-                        for store, best in best_per_store.items():
-                            if store not in store_items:
-                                store_items[store] = {"items": [], "total": 0.0}
-                            store_items[store]["items"].append({
-                                "name": best["name"],
-                                "price": best["price"],
-                                "sale_story": best["sale_story"],
-                            })
-                            store_items[store]["total"] += best["price_val"]
+                            # Track best (cheapest) price per store for this item
+                            best_per_store: Dict[str, Dict[str, Any]] = {}
+                            for deal in deals:
+                                store = deal["store"]
+                                price_val = 0.0
+                                price_str = deal.get("price", "")
+                                try:
+                                    price_val = float(price_str.replace("$", "").split()[0])
+                                except (ValueError, IndexError):
+                                    pass
+                                if store not in best_per_store or price_val < best_per_store[store]["price_val"]:
+                                    best_per_store[store] = {
+                                        "name": item,
+                                        "price": deal["price"],
+                                        "sale_story": deal.get("sale_story", ""),
+                                        "price_val": price_val,
+                                    }
+                            for store, best in best_per_store.items():
+                                if store not in store_items:
+                                    store_items[store] = {"items": [], "total": 0.0}
+                                store_items[store]["items"].append({
+                                    "name": best["name"],
+                                    "price": best["price"],
+                                    "sale_story": best["sale_story"],
+                                })
+                                store_items[store]["total"] += best["price_val"]
+                        else:
+                            results[item] = {"found": False, "note": f"No relevant flyer deals found for '{item}'."}
                     else:
                         results[item] = {"found": False, "note": f"No flyer deals found for '{item}'."}
 

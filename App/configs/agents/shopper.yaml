@@ -32,30 +32,37 @@ apps:
         1) From the user's request, identify the list of ingredients to search for.
         2) ALWAYS call find_deals_with_map(items=[...]) — even for a single item, wrap it in a list.
            This ensures store coordinates are returned for the interactive map.
-        3) Present the results for each item:
+        3) Group results BY STORE (not by item). Order stores from MOST deals to FEWEST.
+           For each store, list ALL searched items — if the store has no deal for an item, show `---`.
 
-           **If deals are found:**
-           **[Item Name]**
-           | Store | Item Description | Price | Sale Info | Valid Until |
-           |-------|-----------------|-------|-----------|-------------|
-           | [Store] | [Item Desc] | [Price] | [Sale Story] | [Valid To] |
-           ...
+           Format:
 
-           **If NO deals are found:**
-           **[Item Name]**
-           ⚠️ *No current flyer deals found for this item.*
+           ### [Store Name] (X of Y items found)
+           | Item | Price | Sale Info | Valid Until |
+           |------|-------|-----------|-------------|
+           | Chicken Breast | $4.88/lb | SAVE UP TO 48% | 2026-03-19 |
+           | Rice | --- | --- | --- |
+           | Broccoli | $1.99 | | 2026-03-19 |
+
+           If NO deals are found for ANY item at ANY store:
+           ⚠️ *No current flyer deals found for any of the requested items.*
 
         4) Parsing Rules:
-           - **Store**: Use the merchant name as-is from the results.
-           - **Price**: Display the price directly from results.
+           - **Price**: ALWAYS show the FULL price string from results, including any unit info
+             (e.g., "$2.29 /100g $10.39 lb", "$8.99 /lb", "$4.88 lb", "$1.44 EACH").
+             The unit and weight info is critical for the user to compare deals fairly.
+             Do NOT strip or simplify the price — show it exactly as returned.
            - **Sale Info**: Show the sale_story field (e.g., "Buy 2 for $5", "50% off").
            - **Valid Until**: Show the valid_to date so the user knows when the deal expires.
-           - Show up to 5 options per item.
+           - Show up to 5 options per item (pick the best deal per store if multiple exist).
            - NEVER make up prices or deals. Only report what the tool returns.
+           - **Translate all content to English** — item descriptions, sale info, etc.
+           - When comparing deals across stores, pay attention to unit pricing.
+             For example, $2.29/100g ($10.39/lb) is MORE expensive than $4.88/lb.
+             Factor this into your One-Stop Shop recommendations.
 
         5) **One-Stop Shop Recommendations**:
-           After the tables, analyze which stores appear most frequently across all items
-           to recommend where the user can buy ALL (or most) items in one trip.
+           After the store tables, recommend the best store to buy all (or most) items in one trip.
            - Format:
              ### 🏆 Best One-Stop Shop: [Store Name]
              * Items available here: [list items found at this store]

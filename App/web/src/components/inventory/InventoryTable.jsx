@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -11,9 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCategoryStyle } from "@/lib/categoryConfig";
+import { FilterIcon } from "lucide-react";
 
 function formatUpdatedAt(value) {
-  if (!value) return "—";
+  if (!value) return "\u2014";
   const parsed = new Date(String(value).replace(" ", "T"));
   if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleString();
@@ -29,8 +30,81 @@ function SortableHeader({ field, label, sortField, sortDirection, onToggleSort, 
       title={`Sort by ${label}`}
     >
       {label}
-      {isActive ? (sortDirection === "desc" ? " ↓" : " ↑") : ""}
+      {isActive ? (sortDirection === "desc" ? " \u2193" : " \u2191") : ""}
     </button>
+  );
+}
+
+function CategoryFilterHeader({
+  sortField,
+  sortDirection,
+  onToggleSort,
+  categoryFilter,
+  onCategoryFilterChange,
+  allItems = [],
+}) {
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const isFiltered = categoryFilter !== "All";
+  const existingCategories = useMemo(() => {
+    const cats = new Set(allItems.map((item) => item.category || "Other"));
+    return [...cats].sort();
+  }, [allItems]);
+  const allOptions = [{ value: "All", label: "All Categories" }, ...existingCategories.map((c) => ({ value: c, label: c }))];
+
+  return (
+    <div className="inline-flex items-center gap-1 relative">
+      <SortableHeader
+        field="category"
+        label="Category"
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onToggleSort={onToggleSort}
+      />
+      <button
+        type="button"
+        className={`p-0.5 rounded hover:bg-muted transition-colors ${isFiltered ? "text-emerald-600" : "text-muted-foreground"}`}
+        onClick={() => setOpen((prev) => !prev)}
+        title="Filter by category"
+      >
+        <FilterIcon className="w-3.5 h-3.5" />
+      </button>
+      {open && (
+        <div
+          ref={popoverRef}
+          className="absolute top-full left-0 mt-1 z-50 w-44 rounded-md border bg-popover text-popover-foreground shadow-md py-1 max-h-64 overflow-y-auto"
+        >
+          {allOptions.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`w-full text-left px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors flex items-center justify-between ${
+                categoryFilter === opt.value ? "font-semibold text-emerald-700 bg-emerald-50" : ""
+              }`}
+              onClick={() => {
+                onCategoryFilterChange(opt.value);
+                setOpen(false);
+              }}
+            >
+              {opt.label}
+              {categoryFilter === opt.value && <span className="text-emerald-600">&#10003;</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -44,6 +118,9 @@ export function InventoryTable({
   onToggleSort,
   newItemKeys = new Set(),
   itemKey,
+  categoryFilter = "All",
+  onCategoryFilterChange,
+  allItems = [],
 }) {
   if (loading && items.length === 0) {
     return (
@@ -78,7 +155,14 @@ export function InventoryTable({
               <SortableHeader field="product_name" label="Product" sortField={sortField} sortDirection={sortDirection} onToggleSort={onToggleSort} />
             </TableHead>
             <TableHead>
-              <SortableHeader field="category" label="Category" sortField={sortField} sortDirection={sortDirection} onToggleSort={onToggleSort} />
+              <CategoryFilterHeader
+                sortField={sortField}
+                sortDirection={sortDirection}
+                onToggleSort={onToggleSort}
+                categoryFilter={categoryFilter}
+                onCategoryFilterChange={onCategoryFilterChange}
+                allItems={allItems}
+              />
             </TableHead>
             <TableHead className="text-right">
               <SortableHeader field="quantity" label="Quantity" sortField={sortField} sortDirection={sortDirection} onToggleSort={onToggleSort} className="justify-end" />
@@ -127,10 +211,10 @@ export function InventoryTable({
                   </Badge>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {item.quantity_unit || "—"}
+                  {item.quantity_unit || "\u2014"}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {item.unit || "—"}
+                  {item.unit || "\u2014"}
                 </TableCell>
                 <TableCell className="text-muted-foreground text-sm">
                   {formatUpdatedAt(item.updated_at || item.created_at)}

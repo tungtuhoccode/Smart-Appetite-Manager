@@ -265,5 +265,6 @@ export function useInventory(api, persistSession) {
     itemKey,
     categoryFilter,
     setCategoryFilter,
+    allItems: items,
   };
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List
@@ -22,6 +23,9 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.inventory_agent.inventory_manager_tools import list_inventory_items
+from src.shopper_agent.grocery_tools import find_best_deals_batch
+
+log = logging.getLogger(__name__)
 
 
 def _db_path() -> str:
@@ -91,3 +95,40 @@ async def get_inventory_items(
 ) -> Dict[str, Any]:
     result = await list_inventory_items(limit=limit, tool_config=_tool_config())
     return _ensure_read_payload(result)
+
+
+@app.get("/api/flyer/deals")
+async def get_flyer_deals(
+    postal_code: str = Query(default="K1A 0A6"),
+    locale: str = Query(default="en-us"),
+) -> Dict[str, Any]:
+    """Fetch flyer deals for all items currently in inventory."""
+    inv = await list_inventory_items(limit=500, tool_config=_tool_config())
+    if inv.get("status") != "success" or not inv.get("rows"):
+        return {"status": "success", "summary": {}, "inventory": {}, "item_count": 0}
+
+    # Build inventory lookup: product_name -> {quantity, quantity_unit, unit}
+    inventory_info: Dict[str, Dict[str, Any]] = {}
+    product_names: List[str] = []
+    for row in inv["rows"]:
+        name = row.get("product_name")
+        if not name:
+            continue
+        if name not in inventory_info:
+            product_names.append(name)
+        inventory_info[name] = {
+            "quantity": row.get("quantity", 0),
+            "quantity_unit": row.get("quantity_unit", ""),
+            "unit": row.get("unit", ""),
+        }
+
+    if not product_names:
+        return {"status": "success", "summary": {}, "inventory": {}, "item_count": 0}
+
+    result = await find_best_deals_batch(
+        items=product_names,
+        tool_config={"postal_code": postal_code, "locale": locale},
+    )
+    result["item_count"] = len(product_names)
+    result["inventory"] = inventory_info
+    return result

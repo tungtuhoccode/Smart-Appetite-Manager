@@ -3,10 +3,12 @@ import { useGateway } from "@/api";
 import { AGENTS } from "@/api/agents";
 import { useGatewaySession } from "@/hooks/useGatewaySession";
 import { useShoppingChat } from "@/hooks/useShoppingChat";
+import { useWeeklyDeals } from "@/hooks/useWeeklyDeals";
 import { extractShopperMapData, extractRoutePlanData } from "@/lib/parseResponse";
 import { StoreMap } from "@/components/shopping/StoreMap";
 import { StoreDealCard } from "@/components/shopping/StoreDealCard";
 import { RouteScoreCard } from "@/components/shopping/RouteScoreCard";
+import { WeeklyDealsGrid } from "@/components/shopping/WeeklyDealsGrid";
 import { AssistantPanel } from "@/components/assistant/AssistantPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +20,7 @@ import {
   SparklesIcon,
   RouteIcon,
   TrophyIcon,
+  TagIcon,
 } from "lucide-react";
 
 const SHOPPER_SESSION_KEY = "shopper_gateway_session_id";
@@ -40,8 +43,9 @@ export default function ShoppingPage() {
   const { client } = useGateway();
   useGatewaySession(client, STORAGE_KEYS, AGENTS.SHOPPER);
 
-  const [activeTab, setActiveTab] = useState("deals");
+  const [activeTab, setActiveTab] = useState("weekly");
   const [chatOpen, setChatOpen] = useState(false);
+  const weeklyDeals = useWeeklyDeals();
 
   // Single unified chat — smart-routes to ShopperAgent or RoutePlannerAgent
   const chat = useShoppingChat(client, {
@@ -87,9 +91,11 @@ export default function ShoppingPage() {
   const sortedStores = useMemo(() => {
     if (!latestMapData?.stores) return [];
     return [...latestMapData.stores].sort((a, b) => {
+      const diff = (b.items?.length || 0) - (a.items?.length || 0);
+      if (diff !== 0) return diff;
       if (a.is_recommended && !b.is_recommended) return -1;
       if (!a.is_recommended && b.is_recommended) return 1;
-      return (b.items?.length || 0) - (a.items?.length || 0);
+      return 0;
     });
   }, [latestMapData]);
 
@@ -175,6 +181,17 @@ export default function ShoppingPage() {
             {/* Tabs */}
             <div className="mt-5 flex items-center gap-2 border-b border-blue-100 pb-3">
               <button
+                onClick={() => setActiveTab("weekly")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === "weekly"
+                    ? "bg-blue-500 text-white shadow-sm"
+                    : "text-muted-foreground hover:bg-blue-50"
+                }`}
+              >
+                <TagIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+                Deals this week
+              </button>
+              <button
                 onClick={() => setActiveTab("deals")}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === "deals"
@@ -183,7 +200,7 @@ export default function ShoppingPage() {
                 }`}
               >
                 <ShoppingCartIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
-                Deal Finder
+                Deal Finder (AI)
               </button>
               <button
                 onClick={() => setActiveTab("route")}
@@ -194,7 +211,7 @@ export default function ShoppingPage() {
                 }`}
               >
                 <RouteIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
-                Route Planner
+                Route Planner (AI)
                 {latestRoutePlan && (
                   <span className="ml-1.5 inline-flex items-center justify-center w-2 h-2 rounded-full bg-emerald-400" />
                 )}
@@ -217,6 +234,16 @@ export default function ShoppingPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* === WEEKLY DEALS TAB === */}
+        {activeTab === "weekly" && (
+          <WeeklyDealsGrid
+            deals={weeklyDeals.deals}
+            loading={weeklyDeals.loading}
+            error={weeklyDeals.error}
+            onRefresh={weeklyDeals.refresh}
+          />
+        )}
 
         {/* === DEALS TAB === */}
         {activeTab === "deals" && (
