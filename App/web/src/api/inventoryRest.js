@@ -67,8 +67,8 @@ export function createInventoryRestClient(baseUrl = DEFAULT_INVENTORY_API_URL) {
       });
     },
 
-    async deals(postalCode = "K1A 0A6", locale = "en-us") {
-      const params = new URLSearchParams({ postal_code: postalCode, locale });
+    async deals(postalCode = "K1A 0A6", locale = "en-us", lat = 45.4215, lng = -75.6972) {
+      const params = new URLSearchParams({ postal_code: postalCode, locale, lat: String(lat), lng: String(lng) });
       return request(`/api/flyer/deals?${params}`, { method: "GET" });
     },
 

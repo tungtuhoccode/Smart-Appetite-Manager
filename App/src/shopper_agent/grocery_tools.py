@@ -1,6 +1,5 @@
 import logging
 import httpx
-import asyncio
 import os
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -40,10 +39,10 @@ else:
     log.warning("[ShopperTools] Sentry DSN not found or invalid. Skipping initialization.")
 
 FLIPP_SEARCH_URL = "https://backflipp.wishabi.com/flipp/items/search"
-NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+OVERPASS_API_URL = "https://overpass-api.de/api/interpreter"
 
-# In-memory geocode cache to avoid redundant Nominatim lookups
-_geocode_cache: Dict[str, Optional[Dict[str, float]]] = {}
+# In-memory cache for Overpass store lookups
+_overpass_cache: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
 
 def safe_set_tag(key: str, value: Any):
     """Safely sets a Sentry tag, ignoring errors if Sentry is not ready."""
@@ -150,49 +149,93 @@ def _parse_flipp_items(raw_items: list, limit: int = 5, query: str = "") -> List
     return deals
 
 
-async def _geocode_store(
-    store_name: str,
+async def find_nearby_stores(
+    store_names: List[str],
     center_lat: float,
     center_lng: float,
-    client: httpx.AsyncClient,
-) -> Optional[Dict[str, float]]:
-    """Geocode a store using Nominatim with a viewbox bounded to ~30km around the center.
+    radius_m: int = 30000,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Find nearby store locations using OpenStreetMap Overpass API.
 
-    The viewbox + bounded=1 constrains results to the local area, so we get
-    the actual nearby branch instead of a random location for the chain.
+    Queries by brand tag for all store names in a single batch request.
+    Returns a dict mapping each input store name to a list of nearby locations
+    with lat, lng, and address.
     """
-    cache_key = f"{store_name}|{center_lat:.2f},{center_lng:.2f}"
-    if cache_key in _geocode_cache:
-        return _geocode_cache[cache_key]
+    if not store_names:
+        return {}
 
-    # ~0.3 degrees ≈ 30km bounding box around center
-    OFFSET = 0.3
-    viewbox = f"{center_lng - OFFSET},{center_lat + OFFSET},{center_lng + OFFSET},{center_lat - OFFSET}"
+    cache_key = f"{'|'.join(sorted(store_names))}|{center_lat:.2f},{center_lng:.2f}"
+    if cache_key in _overpass_cache:
+        return _overpass_cache[cache_key]
+
+    # Build regex alternation for brand matching
+    escaped_names = [name.replace('"', '\\"') for name in store_names]
+    brand_regex = "|".join(escaped_names)
+
+    query = (
+        f'[out:json][timeout:10];'
+        f'nwr["brand"~"{brand_regex}",i]["shop"](around:{radius_m},{center_lat},{center_lng});'
+        f'out center 50;'
+    )
 
     try:
-        params = {
-            "q": store_name,
-            "format": "json",
-            "limit": "1",
-            "countrycodes": "ca",
-            "viewbox": viewbox,
-            "bounded": "1",
-        }
-        headers = {"User-Agent": "SmartAppetiteManager/1.0 (hackathon project)"}
-        resp = await client.get(NOMINATIM_SEARCH_URL, params=params, headers=headers)
-        resp.raise_for_status()
-        results = resp.json()
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                OVERPASS_API_URL,
+                data={"data": query},
+                headers={"User-Agent": "SmartAppetiteManager/1.0 (hackathon project)"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-        if results:
-            coords = {"lat": float(results[0]["lat"]), "lng": float(results[0]["lon"])}
-            _geocode_cache[cache_key] = coords
-            return coords
+        # Group results by matching store name
+        results: Dict[str, List[Dict[str, Any]]] = {name: [] for name in store_names}
+        name_lower_map = {name.lower(): name for name in store_names}
+
+        for element in data.get("elements", []):
+            tags = element.get("tags", {})
+            # Get coordinates (nodes have lat/lon directly, ways/relations have center)
+            lat = element.get("lat") or (element.get("center", {}) or {}).get("lat")
+            lng = element.get("lon") or (element.get("center", {}) or {}).get("lon")
+            if lat is None or lng is None:
+                continue
+
+            # Build address from addr:* tags
+            addr_parts = []
+            house = tags.get("addr:housenumber", "")
+            street = tags.get("addr:street", "")
+            city = tags.get("addr:city", "")
+            if house and street:
+                addr_parts.append(f"{house} {street}")
+            elif street:
+                addr_parts.append(street)
+            if city:
+                addr_parts.append(city)
+            address = ", ".join(addr_parts) if addr_parts else ""
+
+            # Match to input store name via brand or name tag
+            brand = (tags.get("brand") or tags.get("name") or "").lower()
+            matched_name = None
+            for input_lower, input_original in name_lower_map.items():
+                if input_lower in brand or brand in input_lower:
+                    matched_name = input_original
+                    break
+
+            if matched_name:
+                results[matched_name].append({
+                    "name": tags.get("name") or matched_name,
+                    "lat": float(lat),
+                    "lng": float(lng),
+                    "address": address,
+                })
+
+        _overpass_cache[cache_key] = results
+        log.info(f"[ShopperTools] Overpass returned stores for {len([n for n, v in results.items() if v])} of {len(store_names)} chains")
+        return results
 
     except Exception as e:
-        log.warning(f"[ShopperTools] Geocode failed for '{store_name}': {e}")
-
-    _geocode_cache[cache_key] = None
-    return None
+        log.warning(f"[ShopperTools] Overpass query failed: {e}")
+        return {name: [] for name in store_names}
 
 
 @trace
@@ -369,20 +412,29 @@ async def find_deals_with_map(
                     key=lambda s: (len(store_items[s]["items"]), -store_items[s]["total"])
                 )
 
-            # Geocode unique stores (with 1s delay between requests per Nominatim policy)
+            # Batch-fetch all nearby store locations via Overpass
+            nearby = await find_nearby_stores(
+                list(store_items.keys()), map_center_lat, map_center_lng
+            )
             store_locations = []
             for store_name, store_data in store_items.items():
-                coords = await _geocode_store(store_name, map_center_lat, map_center_lng, client)
-                if coords:
+                locations = nearby.get(store_name, [])
+                if locations:
+                    # Pick the nearest location to the center
+                    best = min(
+                        locations,
+                        key=lambda loc: (loc["lat"] - map_center_lat) ** 2
+                        + (loc["lng"] - map_center_lng) ** 2,
+                    )
                     store_locations.append({
                         "store": store_name,
-                        "lat": coords["lat"],
-                        "lng": coords["lng"],
+                        "lat": best["lat"],
+                        "lng": best["lng"],
+                        "address": best.get("address", ""),
                         "items": store_data["items"],
                         "total": round(store_data["total"], 2),
                         "is_recommended": store_name == recommended_store,
                     })
-                    await asyncio.sleep(1.1)  # Nominatim rate limit
 
         shopper_map_data = {
             "stores": store_locations,

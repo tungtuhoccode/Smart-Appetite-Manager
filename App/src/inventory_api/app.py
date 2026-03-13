@@ -31,7 +31,7 @@ from src.inventory_agent.inventory_manager_tools import (
     delete_shopping_list_item,
     clear_checked_shopping_list_items,
 )
-from src.shopper_agent.grocery_tools import find_best_deals_batch
+from src.shopper_agent.grocery_tools import find_best_deals_batch, find_nearby_stores
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +109,8 @@ async def get_inventory_items(
 async def get_flyer_deals(
     postal_code: str = Query(default="K1A 0A6"),
     locale: str = Query(default="en-us"),
+    lat: float = Query(default=45.4215),
+    lng: float = Query(default=-75.6972),
 ) -> Dict[str, Any]:
     """Fetch flyer deals for all items currently in inventory."""
     inv = await list_inventory_items(limit=500, tool_config=_tool_config())
@@ -139,6 +141,23 @@ async def get_flyer_deals(
     )
     result["item_count"] = len(product_names)
     result["inventory"] = inventory_info
+
+    # Fetch nearby store locations for all merchants found in deals
+    merchant_names = set()
+    summary = result.get("summary", {})
+    for item_data in summary.values():
+        for option in (item_data.get("options") or []):
+            store = option.get("store")
+            if store:
+                merchant_names.add(store)
+
+    if merchant_names:
+        result["store_locations"] = await find_nearby_stores(
+            list(merchant_names), lat, lng
+        )
+    else:
+        result["store_locations"] = {}
+
     return result
 
 

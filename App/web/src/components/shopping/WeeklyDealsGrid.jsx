@@ -12,10 +12,53 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   PackageIcon,
+  MapPinIcon,
+  NavigationIcon,
 } from "lucide-react";
 
-function DealOption({ deal }) {
+function StoreLocationsList({ locations }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!locations || locations.length === 0) return null;
+
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+        className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 cursor-pointer"
+      >
+        <MapPinIcon className="w-3 h-3" />
+        {locations.length} location{locations.length !== 1 ? "s" : ""} near you
+        {expanded ? <ChevronDownIcon className="w-3 h-3" /> : <ChevronRightIcon className="w-3 h-3" />}
+      </button>
+      {expanded && (
+        <div className="mt-1 space-y-1 pl-4">
+          {locations.map((loc, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className="truncate flex-1">
+                {loc.address || loc.name}
+              </span>
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0 flex items-center gap-0.5 text-blue-600 hover:text-blue-800"
+              >
+                <NavigationIcon className="w-3 h-3" />
+                Directions
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DealOption({ deal, storeLocations }) {
   const pricePerUnit = deal.pre_price_text || deal.post_price_text;
+  const locations = storeLocations?.[deal.store] || [];
 
   return (
     <div className="flex gap-3 p-3 rounded-lg border border-gray-100 bg-white hover:shadow-sm transition-shadow">
@@ -43,6 +86,7 @@ function DealOption({ deal }) {
           <StoreIcon className="w-3 h-3 text-muted-foreground" />
           <span className="text-xs text-muted-foreground">{deal.store}</span>
         </div>
+        <StoreLocationsList locations={locations} />
         {deal.sale_story && (
           <Badge
             variant="outline"
@@ -70,7 +114,7 @@ function formatInventory(inv) {
   return `${qty} ${unit}`;
 }
 
-function ItemDealsGroup({ itemName, data, inventory, defaultExpanded }) {
+function ItemDealsGroup({ itemName, data, inventory, defaultExpanded, storeLocations }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (!data.found) {
@@ -124,7 +168,7 @@ function ItemDealsGroup({ itemName, data, inventory, defaultExpanded }) {
         {expanded && (
           <div className="space-y-2 mt-3">
             {data.options.map((deal, i) => (
-              <DealOption key={`${itemName}-deal-${i}`} deal={deal} />
+              <DealOption key={`${itemName}-deal-${i}`} deal={deal} storeLocations={storeLocations} />
             ))}
           </div>
         )}
@@ -181,6 +225,7 @@ export function WeeklyDealsGrid({ deals, loading, error, onRefresh }) {
 
   const summary = deals?.summary;
   const inventory = deals?.inventory || {};
+  const storeLocations = deals?.store_locations || {};
 
   if (!summary || Object.keys(summary).length === 0) {
     return (
@@ -225,6 +270,7 @@ export function WeeklyDealsGrid({ deals, loading, error, onRefresh }) {
           data={data}
           inventory={inventory[itemName]}
           defaultExpanded={index === 0}
+          storeLocations={storeLocations}
         />
       ))}
 
