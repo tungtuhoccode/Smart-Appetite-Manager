@@ -19,17 +19,22 @@ if callable(load_dotenv):
     else:
         load_dotenv()
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, File, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.inventory_agent.inventory_manager_tools import (
     list_inventory_items,
+    insert_inventory_items,
     list_shopping_list_items,
     insert_shopping_list_items,
     toggle_shopping_list_item,
     delete_shopping_list_item,
     clear_checked_shopping_list_items,
+)
+from src.receipt_agent.receipt_scanner_tools import (
+    scan_receipt_image_from_bytes,
+    enrich_product_codes,
 )
 from src.shopper_agent.grocery_tools import find_best_deals_batch, find_nearby_stores
 
@@ -76,10 +81,18 @@ def _parse_allowed_origin_regex() -> str:
     )
 
 
+def _llm_tool_config() -> Dict[str, Any]:
+    return {
+        "model_name": os.getenv("LLM_SERVICE_GENERAL_MODEL_NAME", "gpt-4o"),
+        "api_base": os.getenv("LLM_SERVICE_ENDPOINT", ""),
+        "api_key": os.getenv("LLM_SERVICE_API_KEY", ""),
+    }
+
+
 app = FastAPI(
     title="Smart Appetite Inventory API",
-    description="Read-only REST API for inventory list sync (no token required).",
-    version="1.0.0",
+    description="REST API for inventory list sync, receipt scanning, and shopping list.",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -103,6 +116,43 @@ async def get_inventory_items(
 ) -> Dict[str, Any]:
     result = await list_inventory_items(limit=limit, tool_config=_tool_config())
     return _ensure_read_payload(result)
+
+
+class InventoryItemInput(BaseModel):
+    product_name: str
+    quantity: float = 1
+    quantity_unit: str | None = None
+    unit: str | None = None
+    category: str | None = None
+
+
+class InventoryInsertRequest(BaseModel):
+    items: list[InventoryItemInput]
+
+
+@app.post("/api/inventory/items")
+async def add_inventory_items(body: InventoryInsertRequest) -> Dict[str, Any]:
+    items = [item.model_dump() for item in body.items]
+    result = await insert_inventory_items(items=items, tool_config=_tool_config())
+    return result
+
+
+@app.post("/api/receipt/scan")
+async def scan_receipt(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Upload a receipt image and extract grocery items via vision LLM."""
+    image_bytes = await file.read()
+    if not image_bytes:
+        return {"status": "error", "message": "Empty file uploaded."}
+
+    filename = file.filename or "receipt.jpg"
+    llm_cfg = _llm_tool_config()
+
+    scan_result = await scan_receipt_image_from_bytes(image_bytes, filename, llm_cfg)
+    if scan_result.get("status") != "success" or not scan_result.get("items"):
+        return scan_result
+
+    enriched = await enrich_product_codes(scan_result["items"])
+    return enriched
 
 
 @app.get("/api/flyer/deals")

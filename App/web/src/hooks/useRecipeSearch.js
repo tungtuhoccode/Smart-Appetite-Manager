@@ -68,6 +68,7 @@ export function useRecipeSearch(inventoryNames) {
     searching,
     searchError,
     results,
+    setResults,
     search,
   };
 }

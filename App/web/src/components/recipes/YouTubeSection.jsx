@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   PlayCircleIcon,
-  SearchIcon,
   LinkIcon,
   TimerIcon,
   PlusIcon,
@@ -21,7 +20,7 @@ import { toast } from "sonner";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function extractVideoId(url) {
+export function extractVideoId(url) {
   if (!url) return null;
   const match = url.match(
     /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([a-zA-Z0-9_-]{11})/
@@ -29,7 +28,7 @@ function extractVideoId(url) {
   return match ? match[1] : null;
 }
 
-function formatTime(totalSeconds) {
+export function formatTime(totalSeconds) {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
   const s = totalSeconds % 60;
@@ -51,7 +50,7 @@ const TIMER_PRESETS = [
 
 // ── Timer Component ──────────────────────────────────────────────────
 
-function CookingTimer({ timer, onUpdate, onRemove }) {
+export function CookingTimer({ timer, onUpdate, onRemove }) {
   const { id, label, totalSeconds, remaining, running } = timer;
 
   const progress = totalSeconds > 0 ? ((totalSeconds - remaining) / totalSeconds) * 100 : 0;
@@ -138,7 +137,7 @@ function CookingTimer({ timer, onUpdate, onRemove }) {
   );
 }
 
-function CookingTimers() {
+export function CookingTimers() {
   const [timers, setTimers] = useState([]);
   const [customMinutes, setCustomMinutes] = useState("");
   const [customLabel, setCustomLabel] = useState("");
@@ -339,7 +338,7 @@ function CookingTimers() {
 
 // ── YouTube Player ───────────────────────────────────────────────────
 
-function YouTubePlayer({ videoId, title }) {
+export function YouTubePlayer({ videoId, title }) {
   return (
     <div className="aspect-video rounded-lg overflow-hidden border bg-black">
       <iframe
@@ -356,19 +355,11 @@ function YouTubePlayer({ videoId, title }) {
 // ── Main Export ──────────────────────────────────────────────────────
 
 export function YouTubeSection({ savedRecipes = [] }) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchVideoId, setSearchVideoId] = useState(null);
   const [pasteUrl, setPasteUrl] = useState("");
   const [embeddedVideoId, setEmbeddedVideoId] = useState(null);
   const [activeRecipeVideo, setActiveRecipeVideo] = useState(null);
 
   const recipesWithVideo = savedRecipes.filter((r) => extractVideoId(r.youtubeUrl));
-
-  const handleSearch = () => {
-    if (!searchQuery.trim()) return;
-    // Embed YouTube search results directly in the app using the search embed
-    setSearchVideoId(searchQuery.trim());
-  };
 
   const handlePaste = () => {
     const id = extractVideoId(pasteUrl);
@@ -395,6 +386,57 @@ export function YouTubeSection({ savedRecipes = [] }) {
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Paste URL input */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              Paste a YouTube URL
+            </label>
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handlePaste();
+              }}
+            >
+              <div className="relative flex-1">
+                <LinkIcon className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="h-9 pl-8"
+                  placeholder="https://youtube.com/watch?v=..."
+                  value={pasteUrl}
+                  onChange={(e) => setPasteUrl(e.target.value)}
+                />
+              </div>
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                disabled={!extractVideoId(pasteUrl)}
+              >
+                Embed
+              </Button>
+            </form>
+          </div>
+
+          {/* Pasted video embed */}
+          {embeddedVideoId && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-medium text-muted-foreground">Pasted video</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={() => setEmbeddedVideoId(null)}
+                >
+                  <XIcon className="w-3.5 h-3.5 mr-1" />
+                  Close
+                </Button>
+              </div>
+              <YouTubePlayer videoId={embeddedVideoId} title="Pasted video" />
+            </div>
+          )}
+
           {/* Saved recipe videos */}
           {recipesWithVideo.length > 0 && (
             <div>
@@ -451,119 +493,6 @@ export function YouTubeSection({ savedRecipes = [] }) {
               )}
             </div>
           )}
-
-          {/* Search results embedded */}
-          {searchVideoId && (
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-medium text-muted-foreground">
-                  Search results for "{searchVideoId}"
-                </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => setSearchVideoId(null)}
-                >
-                  <XIcon className="w-3.5 h-3.5 mr-1" />
-                  Close
-                </Button>
-              </div>
-              <div className="aspect-video rounded-lg overflow-hidden border bg-black">
-                <iframe
-                  src={`https://www.youtube-nocookie.com/embed?listType=search&list=${encodeURIComponent(searchVideoId + " recipe")}`}
-                  title={`YouTube search: ${searchVideoId}`}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  className="w-full h-full"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Pasted video embed */}
-          {embeddedVideoId && (
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-medium text-muted-foreground">Pasted video</p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => setEmbeddedVideoId(null)}
-                >
-                  <XIcon className="w-3.5 h-3.5 mr-1" />
-                  Close
-                </Button>
-              </div>
-              <YouTubePlayer videoId={embeddedVideoId} title="Pasted video" />
-            </div>
-          )}
-
-          {/* Search + Paste inputs */}
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1 space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Search recipes on YouTube
-              </label>
-              <form
-                className="flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSearch();
-                }}
-              >
-                <div className="relative flex-1">
-                  <SearchIcon className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    className="h-9 pl-8"
-                    placeholder="e.g. chicken parmesan"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </div>
-                <Button
-                  type="submit"
-                  size="sm"
-                  variant="outline"
-                  disabled={!searchQuery.trim()}
-                >
-                  Search
-                </Button>
-              </form>
-            </div>
-
-            <div className="flex-1 space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Paste a YouTube URL
-              </label>
-              <form
-                className="flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handlePaste();
-                }}
-              >
-                <div className="relative flex-1">
-                  <LinkIcon className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    className="h-9 pl-8"
-                    placeholder="https://youtube.com/watch?v=..."
-                    value={pasteUrl}
-                    onChange={(e) => setPasteUrl(e.target.value)}
-                  />
-                </div>
-                <Button
-                  type="submit"
-                  size="sm"
-                  variant="outline"
-                  disabled={!extractVideoId(pasteUrl)}
-                >
-                  Embed
-                </Button>
-              </form>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>

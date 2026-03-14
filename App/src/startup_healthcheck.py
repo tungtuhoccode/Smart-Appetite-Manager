@@ -58,7 +58,7 @@ _TOOL_FUNCTIONS = {
         "find_best_deals_batch",
         "find_deals_with_map",
     ),
-    "receipt_agent.receipt_tools": ("parse_receipt_text",),
+    "receipt_agent.receipt_scanner_tools": ("scan_receipt_image", "enrich_product_codes"),
 }
 
 

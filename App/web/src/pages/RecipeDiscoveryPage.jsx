@@ -1,4 +1,6 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { typeIntoChat } from "@/lib/typeIntoChat";
+import { useChatOpen } from "@/context/ChatOpenContext";
 import { useGateway } from "@/api";
 import { AGENTS } from "@/api/agents";
 import { useGatewaySession } from "@/hooks/useGatewaySession";
@@ -7,11 +9,11 @@ import { useInventorySuggestions } from "@/hooks/useInventorySuggestions";
 import { useRecipeSearch } from "@/hooks/useRecipeSearch";
 import { useRecipeDetails } from "@/hooks/useRecipeDetails";
 import { useSavedRecipes } from "@/hooks/useSavedRecipes";
-import { getRandomMeal, toRecipeCard } from "@/lib/mealdb";
+import { getRandomMeal, toRecipeCard, normalizeAgentRecipeList } from "@/lib/mealdb";
 import { RecipeDetailsDialog } from "@/components/recipes/RecipeDetailsDialog";
 import { RecipeCard } from "@/components/recipes/RecipeCard";
 import { SavedRecipesGrid } from "@/components/recipes/SavedRecipesGrid";
-import { YouTubeSection } from "@/components/recipes/YouTubeSection";
+import { CookingTab } from "@/components/recipes/CookingTab";
 import { AssistantPanel, PANEL_THEMES } from "@/components/assistant/AssistantPanel";
 import { ExecutionTimeline } from "@/components/progress/ExecutionTimeline";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import {
   ChefHatIcon,
+  ChevronDownIcon,
   SearchIcon,
   SparklesIcon,
   RefreshCwIcon,
@@ -29,9 +32,10 @@ import {
   CheckCircle2Icon,
   BookmarkIcon,
   BrainCircuitIcon,
+  Trash2Icon,
   UtensilsCrossedIcon,
+  CookingPotIcon,
 } from "lucide-react";
-import { useEffect } from "react";
 
 const RECIPE_SESSION_KEY = "recipe_gateway_session_id";
 
@@ -51,6 +55,30 @@ const STORAGE_KEYS = {
   sessionId: RECIPE_SESSION_KEY,
 };
 
+const AI_GROUPS_KEY = "ai_recipe_groups_v1";
+const AI_COLLAPSED_KEY = "ai_recipe_groups_collapsed_v1";
+
+function loadPersistedGroups() {
+  try {
+    const raw = localStorage.getItem(AI_GROUPS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function loadCollapsedState() {
+  try {
+    const raw = localStorage.getItem(AI_COLLAPSED_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function formatGroupDate(iso) {
+  const d = new Date(iso);
+  const day = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${day} \u00B7 ${time}`;
+}
+
 export default function RecipeDiscoveryPage() {
   const { client } = useGateway();
   useGatewaySession(client, STORAGE_KEYS, AGENTS.RECIPE_RESEARCH);
@@ -61,21 +89,44 @@ export default function RecipeDiscoveryPage() {
   const saved = useSavedRecipes();
 
   const [activeTab, setActiveTab] = useState("discover");
-  const [chatOpen, setChatOpen] = useState(false);
-  const [featuredRecipe, setFeaturedRecipe] = useState(null);
-  const [featuredLoading, setFeaturedLoading] = useState(false);
+  const { chatOpen, setChatOpen } = useChatOpen();
+  const typingCleanup = useRef(null);
+  const [trendingRecipes, setTrendingRecipes] = useState([]);
+  const [trendingLoading, setTrendingLoading] = useState(false);
 
   const chat = useAssistantChat(client, AGENTS.RECIPE_RESEARCH, {
     welcomeText:
-      "Recipe assistant connected. Ask me for recipe recommendations based on your latest inventory.",
+      "Hi! I'm your Recipe Agent. Tell me what you're in the mood for and I'll suggest recipes based on what's already in your pantry. Let's cook something great!",
     idPrefix: "recipe-chat",
-    errorLabel: "Recipe assistant failed",
+    errorLabel: "SAM recipe agent failed",
   });
+
+  // Load 6 random recipes on mount
+  const initialLoadDone = useRef(false);
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+
+    const pantrySet = new Set(inventory.inventoryNames.map((n) => n.trim().toLowerCase()));
+
+    Promise.all(Array.from({ length: 6 }, () => getRandomMeal()))
+      .then((meals) => {
+        const cards = meals
+          .filter(Boolean)
+          .map((meal) => toRecipeCard(meal, pantrySet))
+          .filter(Boolean);
+        if (cards.length > 0) {
+          recipeSearch.setResults(cards);
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQuickSuggestion = useCallback((tag) => {
     const prompt = typeof tag === "object" ? tag.prompt : tag;
     setChatOpen(true);
-    chat.setInput(prompt);
+    if (typingCleanup.current) typingCleanup.current();
+    typingCleanup.current = typeIntoChat(chat.setInput, prompt);
   }, [chat]);
 
   const handleDiscoverTag = useCallback((tag) => {
@@ -83,38 +134,86 @@ export default function RecipeDiscoveryPage() {
     void recipeSearch.search(tag);
   }, [recipeSearch]);
 
-  // Fetch a random featured recipe on mount
+  // Fetch 4 random trending recipes on mount
   useEffect(() => {
     let cancelled = false;
-    setFeaturedLoading(true);
+    setTrendingLoading(true);
     (async () => {
       try {
-        const meal = await getRandomMeal();
+        const meals = await Promise.all(Array.from({ length: 4 }, () => getRandomMeal()));
         if (cancelled) return;
-        const card = toRecipeCard(meal || {}, new Set());
-        setFeaturedRecipe(
-          card || {
-            id: "featured-fallback",
-            title: "Featured recipe",
-            imageUrl: "",
-            summary: "Could not load featured recipe.",
-            usedIngredients: [],
-            missingIngredients: [],
-            sourceUrl: "",
-            youtubeUrl: "",
-          }
-        );
+        const cards = meals
+          .filter(Boolean)
+          .map((meal) => ({
+            ...toRecipeCard(meal, new Set()),
+            category: meal.strCategory || meal.strArea || "",
+          }))
+          .filter((c) => c && c.id);
+        setTrendingRecipes(cards);
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err);
-        toast.error("Could not load featured recipe", { description: message });
+        toast.error("Could not load trending recipes", { description: message });
       } finally {
-        if (!cancelled) setFeaturedLoading(false);
+        if (!cancelled) setTrendingLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Persistent AI recipe groups
+  const [aiRecipeGroups, setAiRecipeGroups] = useState(loadPersistedGroups);
+  const [collapsedGroups, setCollapsedGroups] = useState(loadCollapsedState);
+  const seenGroupIds = useRef(new Set(loadPersistedGroups().map((g) => g.id)));
+
+  // Merge new groups from chat messages into persisted groups
+  useEffect(() => {
+    let lastUserText = null;
+    const newGroups = [];
+    for (const msg of chat.messages) {
+      if (msg.role === "user") {
+        lastUserText = msg.text;
+      } else if (msg.role === "assistant") {
+        console.log("[ResearchTab] assistant msg:", msg.id, "recipeData:", msg.recipeData?.length ?? "none", "seen:", seenGroupIds.current.has(msg.id));
+        if (Array.isArray(msg.recipeData) && msg.recipeData.length > 0) {
+          if (seenGroupIds.current.has(msg.id)) continue;
+          const normalized = msg.recipeData[0]?.provider
+            ? msg.recipeData
+            : normalizeAgentRecipeList(JSON.stringify(msg.recipeData));
+          console.log("[ResearchTab] normalized recipes:", normalized.length, "from query:", lastUserText);
+          newGroups.push({ id: msg.id, query: lastUserText, recipes: normalized, timestamp: new Date().toISOString() });
+          seenGroupIds.current.add(msg.id);
+        }
+      }
+    }
+    if (newGroups.length > 0) {
+      console.log("[ResearchTab] Adding", newGroups.length, "new group(s)");
+      setAiRecipeGroups((prev) => [...prev, ...newGroups]);
+    }
+  }, [chat.messages]);
+
+  // Persist groups to localStorage
+  useEffect(() => {
+    localStorage.setItem(AI_GROUPS_KEY, JSON.stringify(aiRecipeGroups));
+  }, [aiRecipeGroups]);
+
+  // Persist collapsed state to localStorage
+  useEffect(() => {
+    localStorage.setItem(AI_COLLAPSED_KEY, JSON.stringify(collapsedGroups));
+  }, [collapsedGroups]);
+
+  const toggleGroupCollapsed = useCallback((groupId) => {
+    setCollapsedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+  }, []);
+
+  const clearAllGroups = useCallback(() => {
+    setAiRecipeGroups([]);
+    setCollapsedGroups({});
+    seenGroupIds.current.clear();
+    localStorage.removeItem(AI_GROUPS_KEY);
+    localStorage.removeItem(AI_COLLAPSED_KEY);
   }, []);
 
   const inventoryMeta = useMemo(() => {
@@ -173,17 +272,18 @@ export default function RecipeDiscoveryPage() {
                   <Button
                     type="submit"
                     disabled={recipeSearch.searching || !recipeSearch.query.trim()}
+                    className="bg-orange-500 hover:bg-orange-600 text-white"
                   >
                     {recipeSearch.searching ? "Searching..." : "Find"}
                   </Button>
                 </form>
               ) : (
                 <Button
-                  className="shrink-0 gap-1.5"
+                  className="shrink-0 gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"
                   onClick={() => setChatOpen(true)}
                 >
                   <MessageCircleIcon className="w-4 h-4" />
-                  Ask Recipe Assistant
+                  Ask Recipe Agent
                 </Button>
               )}
             </div>
@@ -195,7 +295,7 @@ export default function RecipeDiscoveryPage() {
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === "discover"
                     ? "bg-orange-500 text-white shadow-sm"
-                    : "text-muted-foreground hover:bg-orange-50"
+                    : "bg-white/70 text-muted-foreground hover:bg-orange-100"
                 }`}
               >
                 <UtensilsCrossedIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
@@ -206,7 +306,7 @@ export default function RecipeDiscoveryPage() {
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === "research"
                     ? "bg-orange-500 text-white shadow-sm"
-                    : "text-muted-foreground hover:bg-orange-50"
+                    : "bg-white/70 text-muted-foreground hover:bg-orange-100"
                 }`}
               >
                 <BrainCircuitIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
@@ -217,7 +317,7 @@ export default function RecipeDiscoveryPage() {
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   activeTab === "saved"
                     ? "bg-orange-500 text-white shadow-sm"
-                    : "text-muted-foreground hover:bg-orange-50"
+                    : "bg-white/70 text-muted-foreground hover:bg-orange-100"
                 }`}
               >
                 <BookmarkIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
@@ -227,6 +327,17 @@ export default function RecipeDiscoveryPage() {
                     {saved.count}
                   </span>
                 )}
+              </button>
+              <button
+                onClick={() => setActiveTab("cooking")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === "cooking"
+                    ? "bg-orange-500 text-white shadow-sm"
+                    : "bg-white/70 text-muted-foreground hover:bg-orange-100"
+                }`}
+              >
+                <CookingPotIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+                Cooking
               </button>
             </div>
 
@@ -239,7 +350,7 @@ export default function RecipeDiscoveryPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleDiscoverTag(tag)}
-                    className="bg-white"
+                    className="bg-white/80 hover:bg-orange-100"
                   >
                     <SearchIcon className="w-3.5 h-3.5" />
                     {tag}
@@ -252,7 +363,7 @@ export default function RecipeDiscoveryPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => handleQuickSuggestion(tag)}
-                    className="bg-white"
+                    className="bg-white/80 hover:bg-orange-100"
                   >
                     <SparklesIcon className="w-3.5 h-3.5" />
                     {tag.label}
@@ -267,44 +378,60 @@ export default function RecipeDiscoveryPage() {
           <>
             {/* Spotlight + Inventory Best */}
             <div className="grid gap-6 lg:grid-cols-[1.35fr,1fr]">
-              {/* Recipe Spotlight */}
-              <Card className="overflow-hidden border-orange-100">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xl">Recipe Spotlight</CardTitle>
+              {/* Trending Now */}
+              <Card className="border-orange-100">
+                <CardHeader>
+                  <CardTitle className="text-2xl font-bold tracking-tight">Trending Now</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {featuredLoading && (
-                    <div className="h-56 rounded-xl bg-muted animate-pulse" />
-                  )}
-                  {!featuredLoading && featuredRecipe && (
-                    <div className="space-y-4">
-                      {featuredRecipe.imageUrl ? (
-                        <img
-                          src={featuredRecipe.imageUrl}
-                          alt={featuredRecipe.title}
-                          className="h-56 w-full object-cover rounded-xl border"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="h-56 rounded-xl bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center">
-                          <ChefHatIcon className="h-10 w-10 text-orange-500" />
+                {trendingLoading && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={`trending-skel-${i}`} className="flex gap-4 items-center">
+                        <div className="h-24 w-28 rounded-lg bg-muted animate-pulse shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-3 w-20 rounded bg-muted animate-pulse" />
+                          <div className="h-5 w-full rounded bg-muted animate-pulse" />
                         </div>
-                      )}
-                      <div>
-                        <h3 className="text-lg font-semibold">
-                          {featuredRecipe.title}
-                        </h3>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {featuredRecipe.summary}
-                        </p>
                       </div>
-                      <Button
-                        onClick={() => void recipeDetail.open(featuredRecipe)}
+                    ))}
+                  </div>
+                )}
+                {!trendingLoading && trendingRecipes.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
+                    {trendingRecipes.map((recipe) => (
+                      <button
+                        key={`trending-${recipe.id}`}
+                        type="button"
+                        className="flex gap-4 items-center text-left group cursor-pointer"
+                        onClick={() => void recipeDetail.open(recipe)}
                       >
-                        View spotlight recipe
-                      </Button>
-                    </div>
-                  )}
+                        {recipe.imageUrl ? (
+                          <img
+                            src={recipe.imageUrl}
+                            alt={recipe.title}
+                            className="h-24 w-28 rounded-lg object-cover shrink-0"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="h-24 w-28 rounded-lg bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center shrink-0">
+                            <ChefHatIcon className="h-6 w-6 text-orange-500" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          {recipe.category && (
+                            <p className="text-xs font-semibold tracking-wider uppercase text-orange-600 mb-1">
+                              {recipe.category}
+                            </p>
+                          )}
+                          <h3 className="text-base font-bold leading-snug line-clamp-2 group-hover:text-orange-600 transition-colors">
+                            {recipe.title}
+                          </h3>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 </CardContent>
               </Card>
 
@@ -379,6 +506,7 @@ export default function RecipeDiscoveryPage() {
                       steps={inventory.progressTimeline}
                       heading="Recommendation generation progress"
                       defaultExpanded={inventory.loading}
+                      sessionId={client?.getSessionId?.() || ""}
                     />
                   )}
                   {!hasCachedSuggestions && !inventory.loading && (
@@ -450,13 +578,12 @@ export default function RecipeDiscoveryPage() {
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="text-xl">Recipe ideas</CardTitle>
                   <Button
-                    variant="outline"
                     size="sm"
                     onClick={() => setChatOpen(true)}
-                    className="gap-1.5"
+                    className="gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"
                   >
                     <MessageCircleIcon className="w-3.5 h-3.5" />
-                    Ask Assistant
+                    Ask Agent
                   </Button>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -504,71 +631,167 @@ export default function RecipeDiscoveryPage() {
 
         {/* === RESEARCH (AI) TAB === */}
         {activeTab === "research" && (
-          <Card className="border-orange-100">
-            <CardContent className="p-12 text-center">
-              {chatOpen ? (
-                <>
-                  <BrainCircuitIcon className="w-10 h-10 text-orange-400 mx-auto mb-3" />
-                  <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                    The Recipe Assistant is open in the sidebar. Ask it for
-                    inventory-aware recipe recommendations, meal plans, and
-                    cooking tips.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <BrainCircuitIcon className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-                  <p className="text-sm font-medium text-muted-foreground">
-                    AI-powered recipe research
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
-                    Open the assistant to get personalized recipe suggestions based
-                    on your current pantry inventory. Use the quick tags above or
-                    ask your own questions.
-                  </p>
+          <>
+            {aiRecipeGroups.length > 0 ? (
+              <>
+                {[...aiRecipeGroups].reverse().map((group) => {
+                  const isCollapsed = !!collapsedGroups[group.id];
+                  return (
+                    <Card key={`ai-group-${group.id}`} className="border-orange-100 overflow-hidden">
+                      <button
+                        type="button"
+                        className="w-full text-left px-6 py-4 flex items-start justify-between gap-3 hover:bg-muted/30 transition-colors cursor-pointer"
+                        onClick={() => toggleGroupCollapsed(group.id)}
+                      >
+                        <div className="min-w-0 flex-1">
+                          {group.query && (
+                            <p className="text-sm text-muted-foreground truncate">
+                              <SparklesIcon className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5 text-orange-400" />
+                              {group.query}
+                            </p>
+                          )}
+                          <p className="text-lg font-semibold tracking-tight mt-1">
+                            {group.recipes.length} recipe{group.recipes.length !== 1 ? "s" : ""} found
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                          {group.timestamp && (
+                            <span className="text-xs text-muted-foreground hidden sm:inline">
+                              {formatGroupDate(group.timestamp)}
+                            </span>
+                          )}
+                          <ChevronDownIcon
+                            className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`}
+                          />
+                        </div>
+                      </button>
+                      {!isCollapsed && (
+                        <CardContent className="pt-0 pb-5">
+                          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {group.recipes.map((recipe) => (
+                              <RecipeCard
+                                key={`ai-recipe-${recipe.id}`}
+                                recipe={recipe}
+                                onView={(selected) => {
+                                  if (selected.sourceUrl) {
+                                    window.open(selected.sourceUrl, "_blank", "noopener,noreferrer");
+                                  } else {
+                                    void recipeDetail.open({ ...selected, provider: "agent" });
+                                  }
+                                }}
+                                isSaved={saved.isRecipeSaved(recipe.id)}
+                                onToggleSave={saved.toggleSave}
+                              />
+                            ))}
+                          </div>
+                        </CardContent>
+                      )}
+                    </Card>
+                  );
+                })}
+                <div className="flex justify-center gap-3">
                   <Button
-                    variant="outline"
-                    className="mt-4"
+                    size="sm"
                     onClick={() => setChatOpen(true)}
+                    className="gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"
                   >
-                    <MessageCircleIcon className="w-4 h-4 mr-1.5" />
-                    Open Assistant
+                    <MessageCircleIcon className="w-3.5 h-3.5" />
+                    Ask for more recommendations
                   </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={clearAllGroups}
+                    className="gap-1.5 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2Icon className="w-3.5 h-3.5" />
+                    Clear history
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Card className="border-orange-100">
+                <CardContent className="p-12 text-center">
+                  {chatOpen ? (
+                    <>
+                      <BrainCircuitIcon className="w-10 h-10 text-orange-400 mx-auto mb-3" />
+                      <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                        The Recipe Agent is open in the sidebar. Ask it for
+                        inventory-aware recipe recommendations, meal plans, and
+                        cooking tips.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <BrainCircuitIcon className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        AI-powered recipe research
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+                        Ask SAM to get personalized recipe suggestions based
+                        on your current pantry inventory. Use the quick tags above or
+                        ask your own questions.
+                      </p>
+                      <Button
+                        className="mt-4 bg-orange-500 hover:bg-orange-600 text-white"
+                        onClick={() => setChatOpen(true)}
+                      >
+                        <MessageCircleIcon className="w-4 h-4 mr-1.5" />
+                        Open Agent
+                      </Button>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </>
         )}
 
         {/* === SAVED RECIPES TAB === */}
         {activeTab === "saved" && (
-          <>
-            <SavedRecipesGrid
-              savedRecipes={saved.savedRecipes}
-              onView={(selected) => void recipeDetail.open(selected)}
-              onToggleSave={saved.toggleSave}
-              isRecipeSaved={saved.isRecipeSaved}
-            />
-            <YouTubeSection savedRecipes={saved.savedRecipes} />
-          </>
+          <SavedRecipesGrid
+            savedRecipes={saved.savedRecipes}
+            onView={(selected) => void recipeDetail.open(selected)}
+            onToggleSave={saved.toggleSave}
+            isRecipeSaved={saved.isRecipeSaved}
+            categories={saved.categories}
+            recipesByCategory={saved.recipesByCategory}
+            moveRecipe={saved.moveRecipe}
+            viewMode={saved.viewMode}
+            setViewMode={saved.setViewMode}
+            addCategory={saved.addCategory}
+            renameCategory={saved.renameCategory}
+            deleteCategory={saved.deleteCategory}
+            updateCategoryColor={saved.updateCategoryColor}
+          />
+        )}
+
+        {/* === COOKING TAB === */}
+        {activeTab === "cooking" && (
+          <CookingTab savedRecipes={saved.savedRecipes} />
         )}
       </div>
 
       {/* Chat FAB */}
       {!chatOpen && (
         <Button
-          className="fixed bottom-6 right-6 z-40 rounded-full shadow-xl h-12 px-4"
+          className="fixed bottom-6 right-6 z-40 rounded-full shadow-xl h-14 pl-5 pr-4 bg-orange-500 hover:bg-orange-600 text-white text-base gap-3"
           onClick={() => setChatOpen(true)}
         >
-          <MessageCircleIcon className="w-5 h-5 mr-1.5" />
-          Chat
+          Ask SAM
+          <span className="relative w-9 h-9 shrink-0">
+            <span className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow ring-2 ring-white/20">
+              <ChefHatIcon className="w-4.5 h-4.5 text-white" />
+            </span>
+            <img src="/SAM-Logo.png" alt="SAM" className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-white shadow-md" />
+          </span>
         </Button>
       )}
 
       <AssistantPanel
         open={chatOpen}
         onClose={() => setChatOpen(false)}
-        title="Recipe Assistant"
+        title="Recipe Agent"
         subtitle="Connected to SAM for live recipe guidance."
         messages={chat.messages}
         activeTimeline={chat.activeTimeline}
@@ -578,8 +801,16 @@ export default function RecipeDiscoveryPage() {
         sending={chat.sending}
         suggestions={AI_TAGS}
         onSuggestionClick={handleQuickSuggestion}
-        onViewRecipe={(recipe) => void recipeDetail.open({ ...recipe, provider: "agent" })}
+        onViewRecipe={(recipe) => {
+          if (recipe.sourceUrl) {
+            window.open(recipe.sourceUrl, "_blank", "noopener,noreferrer");
+          } else {
+            void recipeDetail.open({ ...recipe, provider: "agent" });
+          }
+        }}
+        hideInlineRecipes
         theme={PANEL_THEMES.recipe}
+        sessionId={client?.getSessionId?.() || ""}
       />
 
       <RecipeDetailsDialog

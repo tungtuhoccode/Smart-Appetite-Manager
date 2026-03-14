@@ -79,19 +79,19 @@ export function RecipeDetailsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[92vh] max-h-[92vh] w-[calc(100%-1.5rem)] overflow-hidden p-0 sm:max-w-[920px] md:h-[85vh]">
-        <div className="grid h-full min-h-0 grid-rows-[auto,minmax(0,1fr)] gap-0 md:grid-cols-[340px,minmax(0,1fr)] md:grid-rows-1">
-          <div className="min-h-0 border-b bg-muted/30 md:border-r md:border-b-0">
+      <DialogContent className="max-h-[92vh] w-[calc(100%-1.5rem)] overflow-hidden p-0 sm:max-w-[720px]">
+        <div className="overflow-y-auto overscroll-contain max-h-[92vh]">
+          <div className="bg-muted/40 border-b p-4 rounded-t-lg">
             {imageUrl ? (
-              <img src={imageUrl} alt={title} className="h-56 w-full object-cover md:h-full" />
+              <img src={imageUrl} alt={title} className="w-full max-h-96 object-contain rounded-lg" />
             ) : (
-              <div className="flex h-56 w-full items-center justify-center bg-gradient-to-br from-amber-100 to-orange-100 md:h-full">
+              <div className="flex h-48 w-full items-center justify-center bg-gradient-to-br from-amber-100 to-orange-100 rounded-lg">
                 <ChefHatIcon className="h-10 w-10 text-orange-500" />
               </div>
             )}
           </div>
 
-          <div className="min-h-0 overflow-y-auto overscroll-contain p-5 md:p-6">
+          <div className="p-5 md:p-6">
             <DialogHeader>
               <DialogTitle>{title}</DialogTitle>
               <DialogDescription>
