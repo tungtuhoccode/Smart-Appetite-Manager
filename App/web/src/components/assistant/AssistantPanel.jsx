@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ExecutionTimeline } from "@/components/progress/ExecutionTimeline";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
+import { TypewriterText } from "@/components/assistant/TypewriterText";
 import { useResizableSidebar } from "@/lib/useResizableSidebar";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { RecipeCard } from "@/components/recipes/RecipeCard";
@@ -17,6 +18,7 @@ import {
   SparklesIcon,
   PackageIcon,
   ShoppingCartIcon,
+  CameraIcon,
 } from "lucide-react";
 
 /** Pre-defined themes for each page context */
@@ -55,7 +57,7 @@ const DEFAULT_THEME = PANEL_THEMES.recipe;
 function AssistantAvatar({ size = "sm", theme = DEFAULT_THEME }) {
   const sizeClass =
     size === "lg"
-      ? "w-16 h-16"
+      ? "w-12 h-12"
       : size === "md"
         ? "w-10 h-10"
         : "w-7 h-7";
@@ -66,6 +68,15 @@ function AssistantAvatar({ size = "sm", theme = DEFAULT_THEME }) {
         ? "w-5 h-5 text-white"
         : "w-4 h-4 text-white";
   const Icon = theme.icon;
+  if (theme.avatarSrc) {
+    return (
+      <img
+        src={theme.avatarSrc}
+        alt=""
+        className={`${sizeClass} rounded-full object-cover shrink-0 shadow-md`}
+      />
+    );
+  }
   return (
     <div
       className={`${sizeClass} rounded-full bg-gradient-to-br ${theme.avatarGradient} flex items-center justify-center shrink-0 shadow-md`}
@@ -97,7 +108,7 @@ function AssistantAvatar({ size = "sm", theme = DEFAULT_THEME }) {
 export function AssistantPanel({
   open,
   onClose,
-  title = "Kitchen Assistant",
+  title = "Kitchen Agent",
   subtitle = "I can help manage your inventory. Just ask!",
   messages,
   activeTimeline,
@@ -108,10 +119,13 @@ export function AssistantPanel({
   suggestions,
   onSuggestionClick,
   onViewRecipe,
+  hideInlineRecipes = false,
   theme = DEFAULT_THEME,
+  sessionId = "",
 }) {
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const [animatedIds, setAnimatedIds] = useState(new Set());
 
   const handleDictation = useCallback(
     (transcript) => {
@@ -138,16 +152,21 @@ export function AssistantPanel({
     }
   }, [open]);
 
-  // Manage body class for layout shift
+  // Manage body class + CSS variable for layout shift
   useEffect(() => {
     const className = "inventory-chat-open";
     if (open) {
       document.body.classList.add(className);
+      document.body.style.setProperty("--inventory-assistant-width", `${panelWidth}px`);
     } else {
       document.body.classList.remove(className);
+      document.body.style.removeProperty("--inventory-assistant-width");
     }
-    return () => document.body.classList.remove(className);
-  }, [open]);
+    return () => {
+      document.body.classList.remove(className);
+      document.body.style.removeProperty("--inventory-assistant-width");
+    };
+  }, [open, panelWidth]);
 
   return (
     <>
@@ -175,7 +194,7 @@ export function AssistantPanel({
 
         {/* Header */}
         <div className={`flex h-14 items-center gap-3 px-4 border-b bg-gradient-to-r ${theme.headerBg}`}>
-          <AssistantAvatar size="md" theme={theme} />
+          <img src="/SAM-Logo.png" alt="SAM" className="w-10 h-10 rounded-full object-cover shrink-0 shadow-md" />
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-foreground leading-tight">
               {title}
@@ -240,14 +259,36 @@ export function AssistantPanel({
             >
               {message.role === "assistant" && <AssistantAvatar theme={theme} />}
               <div
-                className={`max-w-[84%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
+                className={`max-w-[84%] rounded-2xl px-3 py-2 text-sm ${
                   message.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-br-md"
+                    ? "whitespace-pre-wrap bg-primary text-primary-foreground rounded-br-md"
                     : `bg-white/95 border ${theme.bubbleBorder} shadow-sm rounded-bl-md`
                 }`}
               >
+                {message.receiptImage && (
+                  <div className={`mb-2 rounded-lg overflow-hidden border ${
+                    message.role === "user" ? "border-white/20" : "border-emerald-200/50"
+                  }`}>
+                    <img src={message.receiptImage} alt="Scanned receipt"
+                         className="w-full max-h-48 object-contain bg-gray-50" />
+                    <div className={`px-2 py-1 text-[10px] flex items-center gap-1 ${
+                      message.role === "user"
+                        ? "bg-white/10 text-primary-foreground/70"
+                        : "bg-emerald-50/50 text-muted-foreground"
+                    }`}>
+                      <CameraIcon className="w-3 h-3" /> Scanned receipt
+                    </div>
+                  </div>
+                )}
                 {message.role === "assistant" ? (
-                  <MarkdownRenderer content={message.text} />
+                  animatedIds.has(message.id) ? (
+                    <MarkdownRenderer content={message.text} />
+                  ) : (
+                    <TypewriterText
+                      content={message.text}
+                      onComplete={() => setAnimatedIds((prev) => new Set(prev).add(message.id))}
+                    />
+                  )
                 ) : (
                   message.text
                 )}
@@ -258,9 +299,11 @@ export function AssistantPanel({
                     steps={message.timeline}
                     defaultExpanded={false}
                     className="mt-2"
+                    sessionId={sessionId}
                   />
                 ) : null}
-                {message.role === "assistant" &&
+                {!hideInlineRecipes &&
+                message.role === "assistant" &&
                 Array.isArray(message.recipeData) &&
                 message.recipeData.length > 0 ? (
                   <div className="mt-3 grid gap-3 grid-cols-1">
@@ -317,6 +360,7 @@ export function AssistantPanel({
                     steps={activeTimeline}
                     heading="Live backend progress"
                     defaultExpanded
+                    sessionId={sessionId}
                   />
                 ) : (
                   <div className="flex gap-1">
@@ -385,9 +429,15 @@ export function AssistantPanel({
               <SendIcon className="w-4 h-4" />
             </Button>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-1.5 text-center">
+          <p className="text-[11px] text-muted-foreground/60 mt-1.5 text-center">
             Press Enter to send
             {micSupported ? " · Click mic to dictate" : ""}
+            {" · "}
+            <span className="inline-flex items-center gap-0.5 align-middle">
+              Powered by
+              <img src="/SAM-Logo.png" alt="Solace Agent Mesh" className="inline h-3 w-3 mx-0.5" />
+              Solace Agent Mesh
+            </span>
           </p>
         </div>
       </div>

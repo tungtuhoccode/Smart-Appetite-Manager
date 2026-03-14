@@ -8,6 +8,8 @@ import {
   PackageOpenIcon,
   LoaderCircleIcon,
   AlertCircleIcon,
+  AlertTriangleIcon,
+  CheckCircle2Icon,
   StoreIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -193,7 +195,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function WeeklyDealsGrid({ deals, loading, error, onRefresh }) {
+export function WeeklyDealsGrid({ deals, loading, error, onRefresh, freshness, checking }) {
   if (loading) {
     return (
       <div>
@@ -257,11 +259,30 @@ export function WeeklyDealsGrid({ deals, loading, error, onRefresh }) {
             )}
           </p>
         </div>
-        <Button variant="ghost" size="sm" onClick={onRefresh}>
-          <RefreshCwIcon className="w-3.5 h-3.5 mr-1.5" />
+        <Button variant="ghost" size="sm" onClick={onRefresh} disabled={loading || checking}>
+          <RefreshCwIcon className={`w-3.5 h-3.5 mr-1.5 ${checking ? "animate-spin" : ""}`} />
           Refresh
         </Button>
       </div>
+
+      {freshness === "stale" && (
+        <div className="rounded-lg border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-900 flex gap-2">
+          <AlertTriangleIcon className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>
+            Your inventory has changed since these deals were loaded.{" "}
+            <button onClick={onRefresh} className="underline font-medium hover:text-amber-950">
+              Refresh
+            </button>{" "}
+            to see updated deals.
+          </span>
+        </div>
+      )}
+      {freshness === "fresh" && deals && (
+        <p className="text-xs text-emerald-600 flex items-center gap-1">
+          <CheckCircle2Icon className="w-3.5 h-3.5" />
+          Deals match your current inventory.
+        </p>
+      )}
 
       {withDeals.map(([itemName, data], index) => (
         <ItemDealsGroup

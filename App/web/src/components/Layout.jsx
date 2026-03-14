@@ -1,6 +1,13 @@
 import React from "react";
-import { Outlet, NavLink } from "react-router-dom";
+import { Outlet, NavLink, useLocation } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
+
+const NAV_ITEMS = [
+  { to: "/", label: "Dashboard", end: true, activeColor: "bg-gray-800 text-white" },
+  { to: "/inventory", label: "Inventory", activeColor: "bg-emerald-600 text-white" },
+  { to: "/recipes", label: "Recipes", activeColor: "bg-orange-500 text-white" },
+  { to: "/shopping", label: "Shopping", activeColor: "bg-sky-600 text-white" },
+];
 
 export default function Layout() {
   return (
@@ -11,55 +18,33 @@ export default function Layout() {
             Smart Appetite Manager
           </span>
           <div className="flex gap-1">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`
-              }
-            >
-              Dashboard
-            </NavLink>
-            <NavLink
-              to="/inventory"
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`
-              }
-            >
-              Inventory
-            </NavLink>
-            <NavLink
-              to="/recipes"
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`
-              }
-            >
-              Recipes
-            </NavLink>
-            <NavLink
-              to="/shopping"
-              className={({ isActive }) =>
-                `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                }`
-              }
-            >
-              Shopping
-            </NavLink>
+            {NAV_ITEMS.map(({ to, label, end, activeColor }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    isActive
+                      ? activeColor
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`
+                }
+              >
+                {label}
+              </NavLink>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-1.5 chat-hide-branding">
+            <span className="text-xs text-muted-foreground">Powered by</span>
+            <img
+              src="/SAM-Logo.png"
+              alt="Solace Agent Mesh"
+              className="h-5 w-5"
+            />
+            <span className="text-xs font-medium text-muted-foreground">
+              Solace Agent Mesh
+            </span>
           </div>
         </div>
       </nav>

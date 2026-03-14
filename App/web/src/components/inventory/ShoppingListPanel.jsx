@@ -94,7 +94,7 @@ export function ShoppingListPanel({
         <div className="text-center py-10">
           <ListChecksIcon className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">
-            Your shopping list is empty. Add items above or use the chat assistant.
+            Your shopping list is empty. Add items above or ask SAM.
           </p>
         </div>
       ) : (
