@@ -1,0 +1,95 @@
+log:
+  stdout_log_level: INFO
+  log_file_level: DEBUG
+  log_file: receipt-scanner.log
+
+# Shared SAM config
+!include ../../shared_config.yaml
+
+apps:
+  - name: receipt-scanner-app
+    app_module: solace_agent_mesh.agent.sac.app
+    broker:
+      <<: *broker_connection
+    app_config:
+      namespace: "${NAMESPACE, sam/}"
+      agent_name: "ReceiptScanner"
+      display_name: "Receipt Scanner Agent"
+      supports_streaming: true
+
+      model: *general_model
+      agent_init_function:
+        module: "rate_limit_init"
+        name: "setup_llm_rate_limit"
+        base_path: "src"
+      instruction: |
+        You are the Receipt Scanner agent. You are a silent backend JSON data pipeline.
+        You are called by the InventoryOrchestrator — never directly by the user.
+
+        STEP-BY-STEP PROCEDURE (follow exactly):
+
+        Step 1: Call scan_receipt_image with the image filename.
+                This returns a JSON object like: {"status": "success", "count": 24, "items": [...]}
+
+        Step 2: Extract the "items" array from the scan result.
+                Call enrich_product_codes and pass the items array as the "items" parameter.
+                This returns: {"status": "success", "count": 24, "enriched": N, "items": [...]}
+
+        Step 3: Return the COMPLETE JSON object from enrich_product_codes as your response.
+                Do NOT summarize, reformat, or convert to text.
+                Do NOT list items as bullet points or numbered lists.
+                Return the raw JSON exactly as received from the tool.
+
+        CRITICAL RULES:
+        - You are a DATA PIPELINE. Your output must be valid JSON, not human-readable text.
+        - NEVER summarize items into a text list. The downstream agent needs the full structured
+          data including product_name, quantity, quantity_unit, unit, category, is_food, price.
+        - NEVER drop fields like quantity, quantity_unit, is_food — they are ALL required downstream.
+        - If scan_receipt_image fails, return its error JSON as-is.
+        - If enrich_product_codes fails or you cannot call it, return the scan result JSON as-is.
+        - Use the EXACT data from tool results. NEVER guess or make up values.
+
+      session_service:
+        type: "sql"
+        database_url: "${INVENTORY_MANAGER_DATABASE_URL, sqlite:///inventory_manager.db}"
+        default_behavior: "PERSISTENT"
+      artifact_service: *default_artifact_service
+
+      tools:
+        - tool_type: python
+          component_module: "src.receipt_agent.receipt_scanner_tools"
+          component_base_path: .
+          function_name: "scan_receipt_image"
+          tool_config:
+            model_name: ${LLM_SERVICE_IMAGE_MODEL_NAME}
+            api_base: ${LLM_SERVICE_ENDPOINT}
+            api_key: ${LLM_SERVICE_API_KEY}
+
+        - tool_type: python
+          component_module: "src.receipt_agent.receipt_scanner_tools"
+          component_base_path: .
+          function_name: "enrich_product_codes"
+
+      agent_card:
+        description: >
+          Receipt Scanner Agent — Internal backend agent that extracts grocery items from
+          receipt images using a vision LLM. This agent should NOT be called directly by
+          the main orchestrator or the user. It is called by the InventoryOrchestrator
+          when a user uploads a receipt image. Handles receipt photos, PLU code lookup,
+          UPC barcode enrichment via Open Food Facts.
+        defaultInputModes: ["text"]
+        defaultOutputModes: ["text"]
+        skills:
+          - id: "scan_receipt"
+            name: "Scan Receipt Image"
+            description: "Extract grocery items from a receipt image and enrich product codes."
+
+      agent_card_publishing:
+        interval_seconds: 30
+
+      agent_discovery:
+        enabled: true
+
+      inter_agent_communication:
+        allow_list: ["InventoryOrchestrator"]
+        request_timeout_seconds: 120

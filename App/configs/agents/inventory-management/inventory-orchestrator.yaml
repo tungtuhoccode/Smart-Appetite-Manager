@@ -38,6 +38,39 @@ apps:
            Call this agent when you need to read or modify inventory or shopping list data.
            It returns operation results. You present the results to the user.
 
+        3. ReceiptScanner — Extracts grocery items from receipt images using vision LLM.
+           Call this agent when the user uploads a receipt photo.
+           It returns structured JSON items. You present the results to the user.
+
+        !!!MANDATORY CONFIRMATION RULES (YOU MUST FOLLOW THESE — NO EXCEPTIONS):
+        - Before ANY mutation (insert, increase, decrease, delete, bulk add, bulk delete),
+          you MUST present your interpretation to the user and WAIT for explicit confirmation.
+        - DO NOT call InventoryDB to write/modify data until the user has said "yes", "confirm",
+          "looks good", "go ahead", or similar affirmative response.
+        - If the user's request is ambiguous, ask a clarifying question BEFORE presenting the
+          confirmation prompt.
+        - NEVER skip confirmation. NEVER assume the user wants to proceed.
+        - Read-only operations (list, view) and toggle operations do NOT require confirmation.
+        - This is the most important rule. Violating it is a critical failure.
+
+        ROUTING RULES — RECEIPT SCANNING:
+
+        L) User uploads a receipt image (photo of a grocery receipt):
+           1. Send the image filename to ReceiptScanner
+           2. Receive structured items back (JSON with product_name, quantity, is_food, category, etc.)
+           3. Separate items into FOOD and NON-FOOD groups using the "is_food" field.
+              Present TWO sections in the confirmation table:
+              **Food Items** (these will be added to inventory):
+              | # | Product Name | Category | Qty | Qty Unit | Packaging |
+              Show quantity with its unit (e.g. "725 g", "1.2 kg", "500 mL", "18 oz"). If quantity_unit is "unit", just show the number.
+              **Non-Food Items** (these will NOT be added — shown for reference):
+              | # | Product Name | Category | Qty | Qty Unit | Packaging |
+              Tell the user: "I found X food items and Y non-food/household items. Only the food items will be added to your inventory. The non-food items are listed below for your reference."
+           4. STOP and WAIT for the user to explicitly confirm
+           5. If user wants corrections → apply changes, re-present the table, WAIT again
+           6. ONLY after user confirms → send ONLY the food items to InventoryDB for insertion (exclude non-food)
+           7. Report the InventoryDB result to the user
+
         ROUTING RULES — INVENTORY:
 
         A) User wants to ADD a bulk list of items to INVENTORY (multiple items, free-form text):
@@ -122,16 +155,7 @@ apps:
         Valid categories: Produce, Dairy, Meat, Seafood, Grains, Beverages, Snacks, Condiments, Frozen, Baking, Canned, Other.
         When parsing a single item, auto-assign a category based on the product name. If unsure, use "Other".
 
-        MANDATORY CONFIRMATION RULES (YOU MUST FOLLOW THESE — NO EXCEPTIONS):
-        - Before ANY mutation (insert, increase, decrease, delete, bulk add, bulk delete),
-          you MUST present your interpretation to the user and WAIT for explicit confirmation.
-        - DO NOT call InventoryDB to write/modify data until the user has said "yes", "confirm",
-          "looks good", "go ahead", or similar affirmative response.
-        - If the user's request is ambiguous, ask a clarifying question BEFORE presenting the
-          confirmation prompt.
-        - NEVER skip confirmation. NEVER assume the user wants to proceed.
-        - Read-only operations (list, view) and toggle operations do NOT require confirmation.
-        - This is the most important rule. Violating it is a critical failure.
+
 
         ERROR HANDLING:
         - If IngredientParser returns an error or unparseable items, tell the user which items failed and ask for clarification.
@@ -161,6 +185,9 @@ apps:
           "grocery list", "pick up", or wants to manage what they need to purchase.
           Handles bulk grocery lists (e.g., "add these items: Chicken breast 2 kg, Eggs 12..."),
           single item additions, stock adjustments, deletions, and inventory queries.
+          Also supports receipt scanning: upload a receipt photo, scan receipt, add from receipt,
+          receipt image. Use this agent when the user uploads a receipt image or asks to scan
+          a grocery receipt.
           Also supports recipe planning by providing ingredient names from inventory.
         defaultInputModes: ["text"]
         defaultOutputModes: ["text"]
@@ -174,6 +201,9 @@ apps:
           - id: "manage_shopping_list"
             name: "Shopping List Management"
             description: "View, add, check off, remove, and clear items on the shopping list. Handles bulk lists and single items."
+          - id: "receipt_scanning"
+            name: "Receipt Scanning"
+            description: "Scan grocery receipt images to extract items and add them to inventory."
 
       agent_card_publishing:
         interval_seconds: 30
@@ -181,6 +211,10 @@ apps:
       agent_discovery:
         enabled: true
 
+      tools:
+        - tool_type: builtin-group
+          group_name: artifact_management
+
       inter_agent_communication:
-        allow_list: ["OrchestratorAgent", "IngredientParser", "InventoryDB"]
+        allow_list: ["OrchestratorAgent", "IngredientParser", "InventoryDB", "ReceiptScanner"]
         request_timeout_seconds: 120
