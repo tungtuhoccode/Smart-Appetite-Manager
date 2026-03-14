@@ -32,3 +32,5 @@ logs/
 
 # SQLite databases (created by SAM at runtime)
 *.db
+*.db-shm
+*.db-wal
