@@ -99,6 +99,13 @@ export function StoreMap({ mapData, className = "", height = "400px" }) {
             <Popup maxWidth={280}>
               <div className="space-y-2 text-sm">
                 <div className="flex items-center gap-2">
+                  {store.logo_url && (
+                    <img
+                      src={store.logo_url}
+                      alt=""
+                      className="w-5 h-5 rounded-sm object-contain shrink-0"
+                    />
+                  )}
                   <span className="font-semibold text-base">{store.store}</span>
                   {store.is_recommended && (
                     <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
@@ -106,6 +113,9 @@ export function StoreMap({ mapData, className = "", height = "400px" }) {
                     </span>
                   )}
                 </div>
+                {store.address && (
+                  <p className="text-xs text-muted-foreground">{store.address}</p>
+                )}
                 {store.items && store.items.length > 0 && (
                   <div>
                     <p className="font-medium text-muted-foreground mb-1">

@@ -29,20 +29,6 @@ function detectAgent(prompt) {
 }
 
 /**
- * Extract unique item names from shopper map data so we can auto-send
- * them to the route planner.
- */
-function extractItemsFromMapData(mapData) {
-  const items = new Set();
-  for (const store of mapData?.stores || []) {
-    for (const item of store.items || []) {
-      if (item.name) items.add(item.name);
-    }
-  }
-  return [...items];
-}
-
-/**
  * Unified shopping chat hook with smart agent routing and auto route planning.
  *
  * - Detects whether a prompt is for deals or route planning using keywords
@@ -91,7 +77,13 @@ export function useShoppingChat(client, options = {}) {
       setActiveTimeline(getExecutionTimelineSnapshot(tracker));
 
       try {
-        const result = await client.send(prompt, agentName, {
+        // Append trigger keyword so ShopperAgent includes structured map data
+        const wirePrompt =
+          agentName === AGENTS.SHOPPER
+            ? `${prompt}\n\n[show-deals-data]`
+            : prompt;
+
+        const result = await client.send(wirePrompt, agentName, {
           onStatus: (statusText, payload) => {
             const changed = applyStatusUpdateToTimeline(
               tracker,
@@ -186,34 +178,7 @@ export function useShoppingChat(client, options = {}) {
 
     try {
       const agent = detectAgent(prompt);
-      const response = await sendToAgent(prompt, agent);
-
-      // Auto-follow-up: if ShopperAgent returned deals, auto-trigger Route Planner
-      if (
-        response &&
-        agent === AGENTS.SHOPPER &&
-        response.shopperMapData &&
-        Array.isArray(response.shopperMapData.stores) &&
-        response.shopperMapData.stores.length > 0
-      ) {
-        const items = extractItemsFromMapData(response.shopperMapData);
-        if (items.length > 0) {
-          // Add a system divider message
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `${idPrefix}-auto-${msgIdRef.current++}`,
-              role: "system",
-              text: `Automatically optimizing your route for ${items.length} items...`,
-            },
-          ]);
-
-          const routePrompt = `Plan the optimal shopping route for these items: ${items.join(", ")}`;
-          await sendToAgent(routePrompt, AGENTS.ROUTE_PLANNER, {
-            isAutoFollowUp: true,
-          });
-        }
-      }
+      await sendToAgent(prompt, agent);
 
       onComplete?.();
     } finally {
