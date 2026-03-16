@@ -14,6 +14,7 @@ export function useInventory(api, persistSession) {
   const [sortField, setSortField] = useState("updated_at");
   const [sortDirection, setSortDirection] = useState("desc");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [mutating, setMutating] = useState(false);
@@ -192,9 +193,15 @@ export function useInventory(api, persistSession) {
   }, []);
 
   const sortedItems = useMemo(() => {
-    const filtered = categoryFilter === "All"
+    let filtered = categoryFilter === "All"
       ? [...items]
       : items.filter((item) => (item.category || "Other") === categoryFilter);
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      filtered = filtered.filter((item) =>
+        (item.product_name || "").toLowerCase().includes(q)
+      );
+    }
     const next = [...filtered];
     next.sort((a, b) => {
       let aVal, bVal;
@@ -219,6 +226,10 @@ export function useInventory(api, persistSession) {
           aVal = (a.category || "Other").toLowerCase();
           bVal = (b.category || "Other").toLowerCase();
           break;
+        case "expires_at":
+          aVal = a.expires_at || "9999-12-31";
+          bVal = b.expires_at || "9999-12-31";
+          break;
         case "updated_at":
         default:
           aVal = String(a?.updated_at || a?.created_at || "");
@@ -232,7 +243,7 @@ export function useInventory(api, persistSession) {
       return aVal > bVal ? 1 : -1;
     });
     return next;
-  }, [items, sortField, sortDirection, categoryFilter]);
+  }, [items, sortField, sortDirection, categoryFilter, searchQuery]);
 
   const toggleSort = useCallback((field) => {
     setSortField((prevField) => {
@@ -265,6 +276,8 @@ export function useInventory(api, persistSession) {
     itemKey,
     categoryFilter,
     setCategoryFilter,
+    searchQuery,
+    setSearchQuery,
     allItems: items,
   };
 }

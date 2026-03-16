@@ -18,8 +18,10 @@ import { DeleteItemDialog } from "@/components/inventory/DeleteItemDialog";
 import { ScanReceiptDialog } from "@/components/inventory/ScanReceiptDialog";
 import { ShoppingListPanel } from "@/components/inventory/ShoppingListPanel";
 import { ReceiptGalleryPanel } from "@/components/inventory/ReceiptGalleryPanel";
+import { BarcodeScannerPanel } from "@/components/inventory/BarcodeScannerPanel";
 import { AssistantPanel, PANEL_THEMES } from "@/components/assistant/AssistantPanel";
 import { readReceiptImages, saveReceiptImage } from "@/lib/receiptStore";
+import { Input } from "@/components/ui/input";
 import {
   MessageCircleIcon,
   RefreshCwIcon,
@@ -28,8 +30,10 @@ import {
   ListChecksIcon,
   ShoppingCartIcon,
   CameraIcon,
-  ImageIcon,
+  ScanLineIcon,
+  SearchIcon,
   SparklesIcon,
+  UtensilsCrossedIcon,
 } from "lucide-react";
 
 const INVENTORY_TAGS = [
@@ -59,7 +63,7 @@ export default function InventoryPage() {
   const shoppingList = useShoppingList();
   const chat = useAssistantChat(client, AGENTS.INVENTORY, {
     welcomeText:
-      "Hey there! I'm your Kitchen Agent. I can help you add items, update quantities, remove things, or just tell you what's in your pantry. What can I do for you?",
+      "Hey there! I'm your Pantry Agent. I can help you add items, update quantities, remove things, or just tell you what's in your pantry. What can I do for you?",
     idPrefix: "inventory-chat",
     errorLabel: "SAM inventory agent failed",
     onComplete: () => inventory.fetchItems({ background: true }),
@@ -85,9 +89,7 @@ export default function InventoryPage() {
     const unchecked = shoppingList.items.filter((it) => !it.checked);
     if (unchecked.length === 0) return;
     const names = unchecked.map((it) => it.product_name).join(", ");
-    setChatOpen(true);
-    if (typingCleanup.current) typingCleanup.current();
-    typingCleanup.current = typeIntoChat(chat.setInput, `Find the best deals for my shopping list: ${names}`);
+    navigate(`/shopping?items=${encodeURIComponent(names)}`);
   };
 
   const handleAddViaChat = () => {
@@ -203,8 +205,8 @@ export default function InventoryPage() {
                     : "bg-white/70 text-muted-foreground hover:bg-emerald-100"
                 }`}
               >
-                <ImageIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
-                Receipts
+                <ScanLineIcon className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+                Scan &amp; Import
                 {receipts.length > 0 && (
                   <span className="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full bg-emerald-600 text-white text-[10px] font-semibold">
                     {receipts.length}
@@ -224,6 +226,14 @@ export default function InventoryPage() {
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
+                    onClick={() => navigate("/recipes?fromInventory=1")}
+                    className="gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"
+                  >
+                    <UtensilsCrossedIcon className="w-3.5 h-3.5" />
+                    Find Recipes
+                  </Button>
+                  <Button
+                    size="sm"
                     onClick={() => setChatOpen(true)}
                     className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
                   >
@@ -234,6 +244,15 @@ export default function InventoryPage() {
               </div>
             </CardHeader>
             <CardContent>
+              <div className="relative mb-4">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search items..."
+                  value={inventory.searchQuery}
+                  onChange={(e) => inventory.setSearchQuery(e.target.value)}
+                  className="pl-9 h-9"
+                />
+              </div>
               {inventory.error && (
                 <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 mb-4">
                   <p className="text-sm text-destructive">
@@ -262,6 +281,7 @@ export default function InventoryPage() {
                 categoryFilter={inventory.categoryFilter}
                 onCategoryFilterChange={inventory.setCategoryFilter}
                 allItems={inventory.allItems}
+                searchQuery={inventory.searchQuery}
               />
             </CardContent>
           </Card>
@@ -304,31 +324,61 @@ export default function InventoryPage() {
           </Card>
         )}
 
-        {/* Receipts Gallery */}
+        {/* Scan & Import */}
         {activeTab === "receipts" && (
-          <Card className="border-emerald-100">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-xl">Receipts</CardTitle>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setScanOpen(true)}
-                  className="gap-1.5"
-                >
-                  <CameraIcon className="w-3.5 h-3.5" />
-                  Scan Receipt
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <ReceiptGalleryPanel
-                receipts={receipts}
-                onRefresh={refreshReceipts}
-                onScanClick={() => setScanOpen(true)}
-              />
-            </CardContent>
-          </Card>
+          <>
+            <Card className="border-emerald-100">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-xl">Barcode Scanner</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <BarcodeScannerPanel
+                  onAddViaChat={(structured, voice) => {
+                    const parts = [];
+                    if (structured.length > 0) {
+                      const lines = structured
+                        .map((it) => `- ${it.product_name}: ${it.quantity} ${it.quantity_unit}`)
+                        .join("\n");
+                      parts.push(`Add these scanned items to my inventory:\n${lines}`);
+                    }
+                    if (voice && voice.length > 0) {
+                      const vLines = voice
+                        .map((v) => `- ${v.count > 1 ? `${v.count}x ` : ""}Barcode ${v.code}: "${v.description}"`)
+                        .join("\n");
+                      parts.push(`Also, I scanned these items but they weren't in the database. Please figure out what they are and add them:\n${vLines}`);
+                    }
+                    if (parts.length === 0) return;
+                    setChatOpen(true);
+                    chat.send(parts.join("\n\n"));
+                  }}
+                />
+              </CardContent>
+            </Card>
+
+            <Card className="border-emerald-100">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-xl">Receipts</CardTitle>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setScanOpen(true)}
+                    className="gap-1.5"
+                  >
+                    <CameraIcon className="w-3.5 h-3.5" />
+                    Scan Receipt
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ReceiptGalleryPanel
+                  receipts={receipts}
+                  onRefresh={refreshReceipts}
+                  onScanClick={() => setScanOpen(true)}
+                />
+              </CardContent>
+            </Card>
+          </>
         )}
       </div>
 
@@ -386,7 +436,7 @@ export default function InventoryPage() {
       <AssistantPanel
         open={chatOpen}
         onClose={() => setChatOpen(false)}
-        title="Kitchen Agent"
+        title="Pantry Agent"
         subtitle="Connected to SAM for inventory management."
         messages={chat.messages}
         activeTimeline={chat.activeTimeline}

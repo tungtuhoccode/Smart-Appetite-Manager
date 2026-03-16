@@ -73,6 +73,21 @@ export function createInventoryRestClient(baseUrl = DEFAULT_INVENTORY_API_URL) {
       return request(`/api/flyer/deals?${params}`, { method: "GET" });
     },
 
+    async searchDeal(query, postalCode = "K1A 0A6", locale = "en-us", lat = 45.4215, lng = -75.6972, limit = 20) {
+      const params = new URLSearchParams({ q: query, postal_code: postalCode, locale, lat: String(lat), lng: String(lng), limit: String(limit) });
+      return request(`/api/flyer/search?${params}`, { method: "GET" });
+    },
+
+    async searchFoodDeals(query, postalCode = "K1A 0A6", locale = "en-us", lat = 45.4215, lng = -75.6972, limit = 20) {
+      const params = new URLSearchParams({ q: query, postal_code: postalCode, locale, lat: String(lat), lng: String(lng), limit: String(limit) });
+      return request(`/api/flyer/search/food?${params}`, { method: "GET" });
+    },
+
+    async searchBeverageDeals(query, postalCode = "K1A 0A6", locale = "en-us", lat = 45.4215, lng = -75.6972, limit = 20) {
+      const params = new URLSearchParams({ q: query, postal_code: postalCode, locale, lat: String(lat), lng: String(lng), limit: String(limit) });
+      return request(`/api/flyer/search/beverages?${params}`, { method: "GET" });
+    },
+
     // Shopping list
     async shoppingList(limit = 200) {
       return request(`/api/shopping-list/items?limit=${encodeURIComponent(limit)}`, {
@@ -110,6 +125,12 @@ export function createInventoryRestClient(baseUrl = DEFAULT_INVENTORY_API_URL) {
         method: "POST",
         body: formData,
         headers: {},
+      });
+    },
+
+    async lookupBarcode(code) {
+      return request(`/api/barcode/lookup?code=${encodeURIComponent(code)}`, {
+        method: "GET",
       });
     },
 

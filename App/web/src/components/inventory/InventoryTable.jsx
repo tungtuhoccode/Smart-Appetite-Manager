@@ -18,7 +18,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { getCategoryStyle } from "@/lib/categoryConfig";
-import { FilterIcon, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { FilterIcon, MoreHorizontal, Pencil, Trash2, SearchIcon } from "lucide-react";
 
 function formatUpdatedAt(value) {
   if (!value) return "\u2014";
@@ -115,6 +115,36 @@ function CategoryFilterHeader({
   );
 }
 
+function FreshnessBadge({ expiresAt }) {
+  if (!expiresAt) return <span className="text-muted-foreground">{"\u2014"}</span>;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const exp = new Date(expiresAt + "T00:00:00");
+  const diffMs = exp - now;
+  const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+  if (days < 0) {
+    const ago = Math.abs(days);
+    return (
+      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-700">
+        {ago === 0 ? "Expired" : `${ago}d ago`}
+      </span>
+    );
+  }
+  if (days <= 3) {
+    return (
+      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700">
+        {days}d
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">
+      {days}d
+    </span>
+  );
+}
+
 export function InventoryTable({
   items,
   loading,
@@ -128,6 +158,7 @@ export function InventoryTable({
   categoryFilter = "All",
   onCategoryFilterChange,
   allItems = [],
+  searchQuery = "",
 }) {
   if (loading && items.length === 0) {
     return (
@@ -140,14 +171,15 @@ export function InventoryTable({
   }
 
   if (!loading && items.length === 0) {
+    const hasFilter = searchQuery.trim() || categoryFilter !== "All";
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <div className="text-4xl mb-3">📦</div>
+        <div className="text-4xl mb-3">{hasFilter ? <SearchIcon className="w-10 h-10 text-muted-foreground" /> : "📦"}</div>
         <h3 className="text-lg font-semibold text-foreground">
-          No items in inventory
+          {hasFilter ? "No matching items" : "No items in inventory"}
         </h3>
         <p className="text-sm text-muted-foreground mt-1">
-          Add your first items to get started
+          {hasFilter ? "Try adjusting your search or filter" : "Add your first items to get started"}
         </p>
       </div>
     );
@@ -179,6 +211,9 @@ export function InventoryTable({
             </TableHead>
             <TableHead>
               <SortableHeader field="unit" label="Package" sortField={sortField} sortDirection={sortDirection} onToggleSort={onToggleSort} />
+            </TableHead>
+            <TableHead>
+              <SortableHeader field="expires_at" label="Freshness" sortField={sortField} sortDirection={sortDirection} onToggleSort={onToggleSort} />
             </TableHead>
             <TableHead>
               <SortableHeader field="updated_at" label="Last Updated" sortField={sortField} sortDirection={sortDirection} onToggleSort={onToggleSort} />
@@ -222,6 +257,9 @@ export function InventoryTable({
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {item.unit || "\u2014"}
+                </TableCell>
+                <TableCell>
+                  <FreshnessBadge expiresAt={item.expires_at} />
                 </TableCell>
                 <TableCell className="text-muted-foreground text-sm">
                   {formatUpdatedAt(item.updated_at || item.created_at)}

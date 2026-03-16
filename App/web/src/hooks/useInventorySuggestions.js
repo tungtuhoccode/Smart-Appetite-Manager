@@ -154,7 +154,7 @@ export function useInventorySuggestions(client) {
 
       const recipes = normalizeAgentRecipeList(response.text);
       if (!recipes.length) {
-        throw new Error("Recipe agent did not return a valid recipe list.");
+        throw new Error("Chef agent did not return a valid recipe list.");
       }
 
       const generatedAt = new Date().toISOString();
