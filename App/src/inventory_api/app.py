@@ -35,8 +35,9 @@ from src.inventory_agent.inventory_manager_tools import (
 from src.receipt_agent.receipt_scanner_tools import (
     scan_receipt_image_from_bytes,
     enrich_product_codes,
+    lookup_barcode,
 )
-from src.shopper_agent.grocery_tools import find_best_deals_batch, find_nearby_stores
+from src.shopper_agent.grocery_tools import check_local_flyers, find_best_deals_batch, find_nearby_stores
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +125,7 @@ class InventoryItemInput(BaseModel):
     quantity_unit: str | None = None
     unit: str | None = None
     category: str | None = None
+    expires_at: str | None = None
 
 
 class InventoryInsertRequest(BaseModel):
@@ -153,6 +155,13 @@ async def scan_receipt(file: UploadFile = File(...)) -> Dict[str, Any]:
 
     enriched = await enrich_product_codes(scan_result["items"])
     return enriched
+
+
+@app.get("/api/barcode/lookup")
+async def barcode_lookup(
+    code: str = Query(..., min_length=1, description="PLU (4-5 digit) or UPC (12-13 digit) barcode"),
+) -> Dict[str, Any]:
+    return await lookup_barcode(code)
 
 
 @app.get("/api/flyer/deals")
@@ -209,6 +218,81 @@ async def get_flyer_deals(
         result["store_locations"] = {}
 
     return result
+
+
+async def _search_deals_with_category(
+    q: str,
+    postal_code: str,
+    locale: str,
+    lat: float,
+    lng: float,
+    limit: int,
+    category: str | None = None,
+) -> Dict[str, Any]:
+    """Shared search logic used by all /api/flyer/search* endpoints."""
+    result = await check_local_flyers(
+        item_name=q,
+        limit=limit,
+        category=category,
+        tool_config={"postal_code": postal_code, "locale": locale},
+    )
+
+    if result.get("status") != "success" or not result.get("deals"):
+        return {"status": "success", "query": q, "found": False, "options": [], "store_locations": {}}
+
+    # Collect store names and fetch nearby locations
+    merchant_names = {deal["store"] for deal in result["deals"] if deal.get("store")}
+    store_locations = {}
+    if merchant_names:
+        store_locations = await find_nearby_stores(list(merchant_names), lat, lng)
+
+    return {
+        "status": "success",
+        "query": q,
+        "found": True,
+        "options": result["deals"],
+        "store_locations": store_locations,
+    }
+
+
+@app.get("/api/flyer/search")
+async def search_flyer_deals(
+    q: str = Query(..., min_length=1, description="Item to search for"),
+    postal_code: str = Query(default="K1A 0A6"),
+    locale: str = Query(default="en-us"),
+    lat: float = Query(default=45.4215),
+    lng: float = Query(default=-75.6972),
+    limit: int = Query(default=20, ge=1, le=100, description="Max number of deals to return"),
+    category: str | None = Query(default=None, description="Filter by _L2 category: 'Food Items' or 'Beverages'"),
+) -> Dict[str, Any]:
+    """Search flyer deals for a single item by name."""
+    return await _search_deals_with_category(q, postal_code, locale, lat, lng, limit, category)
+
+
+@app.get("/api/flyer/search/food")
+async def search_food_deals(
+    q: str = Query(..., min_length=1, description="Item to search for"),
+    postal_code: str = Query(default="K1A 0A6"),
+    locale: str = Query(default="en-us"),
+    lat: float = Query(default=45.4215),
+    lng: float = Query(default=-75.6972),
+    limit: int = Query(default=20, ge=1, le=100, description="Max number of deals to return"),
+) -> Dict[str, Any]:
+    """Search flyer deals filtered to Food Items only."""
+    return await _search_deals_with_category(q, postal_code, locale, lat, lng, limit, category="Food Items")
+
+
+@app.get("/api/flyer/search/beverages")
+async def search_beverage_deals(
+    q: str = Query(..., min_length=1, description="Item to search for"),
+    postal_code: str = Query(default="K1A 0A6"),
+    locale: str = Query(default="en-us"),
+    lat: float = Query(default=45.4215),
+    lng: float = Query(default=-75.6972),
+    limit: int = Query(default=20, ge=1, le=100, description="Max number of deals to return"),
+) -> Dict[str, Any]:
+    """Search flyer deals filtered to Beverages only."""
+    return await _search_deals_with_category(q, postal_code, locale, lat, lng, limit, category="Beverages")
 
 
 # ---------------------------------------------------------------------------

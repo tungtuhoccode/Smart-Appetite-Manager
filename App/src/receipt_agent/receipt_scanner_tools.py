@@ -372,11 +372,43 @@ async def enrich_product_codes(
     return {"status": "success", "count": len(items), "enriched": enriched, "items": items}
 
 
+_OFF_CATEGORY_MAP: Dict[str, str] = {
+    "beverages": "Beverages",
+    "dairy": "Dairy",
+    "meats": "Meat",
+    "seafood": "Seafood",
+    "snacks": "Snacks",
+    "cereals": "Grains",
+    "breads": "Grains",
+    "pastas": "Grains",
+    "canned": "Canned",
+    "frozen": "Frozen",
+    "condiments": "Condiments",
+    "sauces": "Condiments",
+    "baking": "Baking",
+    "fruits": "Produce",
+    "vegetables": "Produce",
+    "plant-based-milk": "Beverages",
+    "milk-substitutes": "Beverages",
+    "milk": "Dairy",
+    "cheeses": "Dairy",
+    "yogurts": "Dairy",
+}
+
+
+def _map_off_category(categories_str: str) -> str:
+    """Map Open Food Facts categories string to our inventory category."""
+    lower = categories_str.lower()
+    for keyword, category in _OFF_CATEGORY_MAP.items():
+        if keyword in lower:
+            return category
+    return "Other"
+
+
 async def _lookup_upc(code: str, log_id: str) -> Optional[Dict[str, Any]]:
     """Look up a UPC code via Open Food Facts, then fallback to UPCitemdb.
 
-    Returns a dict with 'name' and optionally 'quantity_value' + 'quantity_unit',
-    or None if not found.
+    Returns a dict with product info or None if not found.
     """
     # Try both the raw code and zero-padded to 13 digits (EAN format)
     codes_to_try = [code]
@@ -400,13 +432,33 @@ async def _lookup_upc(code: str, log_id: str) -> Optional[Dict[str, Any]]:
                         name = product.get("product_name") or product.get("product_name_en")
                         if name and len(name) > 1:
                             result: Dict[str, Any] = {"name": name}
-                            # Extract package size from Open Food Facts
+                            # Brand
+                            brand = product.get("brands", "")
+                            if brand:
+                                result["brand"] = brand.split(",")[0].strip()
+                            # Image
+                            img = product.get("image_front_small_url") or product.get("image_front_url")
+                            if img:
+                                result["image_url"] = img
+                            # Category
+                            cats = product.get("categories", "")
+                            if cats:
+                                result["category"] = _map_off_category(cats)
+                            # Package size
                             qty_str = product.get("quantity", "")
                             if qty_str:
                                 parsed = _parse_quantity_string(qty_str)
                                 if parsed:
                                     result["quantity_value"] = parsed[0]
                                     result["quantity_unit"] = parsed[1]
+                            # Serving size fallback for quantity
+                            if "quantity_value" not in result:
+                                srv = product.get("serving_size", "")
+                                if srv:
+                                    parsed = _parse_quantity_string(srv.split("(")[-1].rstrip(")"))
+                                    if parsed:
+                                        result["quantity_value"] = parsed[0]
+                                        result["quantity_unit"] = parsed[1]
                             log.debug(f"{log_id} OFF {upc} -> {result}")
                             return result
         except Exception as e:
@@ -423,10 +475,18 @@ async def _lookup_upc(code: str, log_id: str) -> Optional[Dict[str, Any]]:
                 data = resp.json()
                 items_list = data.get("items", [])
                 if items_list:
-                    name = items_list[0].get("title")
+                    item = items_list[0]
+                    name = item.get("title")
                     if name and len(name) > 1:
+                        result: Dict[str, Any] = {"name": name}
+                        brand = item.get("brand")
+                        if brand:
+                            result["brand"] = brand
+                        images = item.get("images", [])
+                        if images:
+                            result["image_url"] = images[0]
                         log.debug(f"{log_id} UPCitemdb {code} -> {name}")
-                        return {"name": name}
+                        return result
     except Exception as e:
         log.debug(f"{log_id} UPCitemdb lookup failed for {code}: {e}")
 
@@ -473,6 +533,54 @@ def _parse_quantity_string(qty_str: str) -> Optional[tuple]:
 # ---------------------------------------------------------------------------
 # SAM tool wrapper: load image from artifact service, then scan
 # ---------------------------------------------------------------------------
+async def lookup_barcode(code: str) -> Dict[str, Any]:
+    """Look up a barcode (PLU 4-5 digit or UPC 12-13 digit) and return product info."""
+    log_id = f"[ReceiptScanner:lookup_barcode:{code}]"
+    code = code.strip()
+
+    if not code:
+        return {"status": "error", "message": "No barcode code provided."}
+
+    # PLU codes: 4-5 digits
+    if re.match(r"^\d{4,5}$", code):
+        plu_name = PLU_TABLE.get(code)
+        if plu_name:
+            log.info(f"{log_id} PLU match -> {plu_name}")
+            return {
+                "status": "found",
+                "product_name": plu_name,
+                "category": "Produce",
+                "quantity": 1,
+                "quantity_unit": "unit",
+                "source": "plu",
+                "code": code,
+            }
+        return {"status": "not_found", "message": f"PLU code {code} not in lookup table.", "code": code}
+
+    # UPC codes: 12-13 digits
+    if re.match(r"^\d{12,13}$", code):
+        result = await _lookup_upc(code, log_id)
+        if result:
+            log.info(f"{log_id} UPC match -> {result['name']}")
+            resp: Dict[str, Any] = {
+                "status": "found",
+                "product_name": result["name"],
+                "category": result.get("category", "Other"),
+                "quantity": result.get("quantity_value", 1),
+                "quantity_unit": result.get("quantity_unit", "unit"),
+                "source": "upc",
+                "code": code,
+            }
+            if result.get("brand"):
+                resp["brand"] = result["brand"]
+            if result.get("image_url"):
+                resp["image_url"] = result["image_url"]
+            return resp
+        return {"status": "not_found", "message": f"UPC code {code} not found in databases.", "code": code}
+
+    return {"status": "error", "message": f"Invalid barcode format: expected 4-5 digit PLU or 12-13 digit UPC, got '{code}'."}
+
+
 async def scan_receipt_image(
     image_filename: str,
     tool_context: Optional[Any] = None,
