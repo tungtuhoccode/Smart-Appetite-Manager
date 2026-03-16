@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  BookmarkIcon,
   ChefHatIcon,
   ExternalLinkIcon,
   ClockIcon,
@@ -53,6 +54,8 @@ export function RecipeDetailsDialog({
   recipeDetails,
   detailLoading,
   detailError,
+  isSaved = false,
+  onToggleSave,
 }) {
   const title = recipeDetails?.title || selectedRecipe?.title || "Recipe details";
   const imageUrl = recipeDetails?.imageUrl || selectedRecipe?.imageUrl;
@@ -199,17 +202,29 @@ export function RecipeDetailsDialog({
                   </div>
                 </section>
 
-                {sourceUrl && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      window.open(sourceUrl, "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    <ExternalLinkIcon className="h-4 w-4" />
-                    Open source
-                  </Button>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  {onToggleSave && (
+                    <Button
+                      variant={isSaved ? "default" : "outline"}
+                      onClick={() => onToggleSave(selectedRecipe)}
+                      className={isSaved ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}
+                    >
+                      <BookmarkIcon className={`h-4 w-4 ${isSaved ? "fill-current" : ""}`} />
+                      {isSaved ? "Saved" : "Save Recipe"}
+                    </Button>
+                  )}
+                  {sourceUrl && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        window.open(sourceUrl, "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      <ExternalLinkIcon className="h-4 w-4" />
+                      Open source
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
           </div>

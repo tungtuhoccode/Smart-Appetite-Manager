@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { typeIntoChat } from "@/lib/typeIntoChat";
 import { useChatOpen } from "@/context/ChatOpenContext";
 import { useGateway } from "@/api";
@@ -88,18 +89,32 @@ export default function RecipeDiscoveryPage() {
   const recipeDetail = useRecipeDetails(client, RECIPE_SESSION_KEY);
   const saved = useSavedRecipes();
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState("discover");
   const { chatOpen, setChatOpen } = useChatOpen();
   const typingCleanup = useRef(null);
+  const prefillApplied = useRef(false);
   const [trendingRecipes, setTrendingRecipes] = useState([]);
   const [trendingLoading, setTrendingLoading] = useState(false);
 
   const chat = useAssistantChat(client, AGENTS.RECIPE_RESEARCH, {
     welcomeText:
-      "Hi! I'm your Recipe Agent. Tell me what you're in the mood for and I'll suggest recipes based on what's already in your pantry. Let's cook something great!",
+      "Hi! I'm your Chef Agent. Tell me what you're in the mood for and I'll suggest recipes based on what's already in your pantry. Let's cook something great!",
     idPrefix: "recipe-chat",
-    errorLabel: "SAM recipe agent failed",
+    errorLabel: "SAM chef agent failed",
   });
+
+  // Pre-fill chat from ?fromInventory= URL param (e.g. from Inventory "Find Recipes" button)
+  useEffect(() => {
+    if (prefillApplied.current) return;
+    if (searchParams.get("fromInventory")) {
+      prefillApplied.current = true;
+      setChatOpen(true);
+      if (typingCleanup.current) typingCleanup.current();
+      typingCleanup.current = typeIntoChat(chat.setInput, "Find me best recipe based on my current ingredients");
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams, chat]);
 
   // Load 6 random recipes on mount
   const initialLoadDone = useRef(false);
@@ -283,7 +298,7 @@ export default function RecipeDiscoveryPage() {
                   onClick={() => setChatOpen(true)}
                 >
                   <MessageCircleIcon className="w-4 h-4" />
-                  Ask Recipe Agent
+                  Ask Chef Agent
                 </Button>
               )}
             </div>
@@ -716,7 +731,7 @@ export default function RecipeDiscoveryPage() {
                     <>
                       <BrainCircuitIcon className="w-10 h-10 text-orange-400 mx-auto mb-3" />
                       <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                        The Recipe Agent is open in the sidebar. Ask it for
+                        The Chef Agent is open in the sidebar. Ask it for
                         inventory-aware recipe recommendations, meal plans, and
                         cooking tips.
                       </p>
@@ -786,7 +801,7 @@ export default function RecipeDiscoveryPage() {
       <AssistantPanel
         open={chatOpen}
         onClose={() => setChatOpen(false)}
-        title="Recipe Agent"
+        title="Chef Agent"
         subtitle="Connected to SAM for live recipe guidance."
         messages={chat.messages}
         activeTimeline={chat.activeTimeline}
@@ -817,6 +832,8 @@ export default function RecipeDiscoveryPage() {
         onOpenChange={(open) => {
           if (!open) recipeDetail.close();
         }}
+        isSaved={recipeDetail.selectedRecipe ? saved.isRecipeSaved(recipeDetail.selectedRecipe.id) : false}
+        onToggleSave={saved.toggleSave}
       />
     </div>
   );

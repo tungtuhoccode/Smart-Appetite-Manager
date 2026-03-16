@@ -1,6 +1,7 @@
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { StoreMap } from "@/components/shopping/StoreMap";
 
 function tryParseMapData(raw) {
@@ -33,7 +34,24 @@ export function MarkdownRenderer({ content, className = "" }) {
     <div className={`text-sm leading-relaxed text-foreground break-words ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]}
         components={{
+          details: ({ children, ...props }) => (
+            <details
+              className="my-2 rounded-md border bg-muted/30 open:bg-transparent"
+              {...props}
+            >
+              {children}
+            </details>
+          ),
+          summary: ({ children, ...props }) => (
+            <summary
+              className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-muted/50 rounded-md"
+              {...props}
+            >
+              {children}
+            </summary>
+          ),
           p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
           ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-1">{children}</ul>,
           ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1">{children}</ol>,
@@ -96,7 +114,8 @@ export function MarkdownRenderer({ content, className = "" }) {
             <img
               src={src}
               alt={alt || "Markdown image"}
-              className="my-2 w-full rounded-md border object-cover"
+              className="rounded-md border object-contain bg-gray-50"
+              style={{ width: 140, maxHeight: 120 }}
               loading="lazy"
             />
           ),
