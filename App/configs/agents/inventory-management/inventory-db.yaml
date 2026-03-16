@@ -35,6 +35,17 @@ apps:
 
         INVENTORY TOOLS:
         - list_inventory_items: Return current inventory rows.
+        - search_inventory_items: Search and filter inventory items. Accepts optional filters:
+          query (substring match on product_name), category (single exact match) or categories
+          (list for multi-category match, e.g. ["Dairy", "Produce"]), added_after/added_before
+          (ISO date strings for created_at), updated_after/updated_before (ISO date strings for
+          updated_at), expiring_within_days (items expiring within N days), include_expired (bool),
+          expired_only (bool, return only expired items), missing_expiration (bool, filter by
+          presence/absence of expiration date), min_quantity/max_quantity (numeric thresholds for
+          stock level queries like "running low" or "out of stock"), sort_by (column + direction,
+          e.g. "quantity_asc", "expires_at_asc", "name", "updated_at_desc").
+          Use this instead of list_inventory_items when the user asks about specific items,
+          categories, stock levels, expiration, date ranges, or wants sorted results.
         - get_ingredient_names: Return comma-separated ingredient names for recipe search.
         - insert_inventory_items: Insert items. Expects an `items` parameter: a list of objects,
           each with product_name (string), quantity (number), quantity_unit (string), unit (string), category (string, optional).
@@ -76,6 +87,12 @@ apps:
           component_base_path: "src"
           component_module: "inventory_agent.inventory_manager_tools"
           function_name: "list_inventory_items"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "search_inventory_items"
           tool_config:
             db_path: ${INVENTORY_MANAGER_DB_NAME}
         - tool_type: python

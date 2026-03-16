@@ -108,7 +108,7 @@ function AssistantAvatar({ size = "sm", theme = DEFAULT_THEME }) {
 export function AssistantPanel({
   open,
   onClose,
-  title = "Kitchen Agent",
+  title = "Pantry Agent",
   subtitle = "I can help manage your inventory. Just ask!",
   messages,
   activeTimeline,
