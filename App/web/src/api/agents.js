@@ -190,7 +190,7 @@ export function createAgentAPI(client) {
     },
   };
 
-  // ── Recipe Agent API ─────────────────────────────────────────────────
+  // ── Chef Agent API ─────────────────────────────────────────────────
 
   const recipes = {
     /**

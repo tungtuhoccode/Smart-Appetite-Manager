@@ -1,7 +1,7 @@
 log:
   stdout_log_level: INFO
 
-!include ../shared_config.yaml
+!include ../../shared_config.yaml
 
 apps:
   - name: recipe-assistant_app
@@ -15,7 +15,7 @@ apps:
       namespace: ${NAMESPACE, sam/}
       supports_streaming: true
       agent_name: "RecipeAssistant"
-      display_name: "Recipe Assistant"
+      display_name: "Chef Agent"
       model: *planning_model
       agent_init_function:
         module: "rate_limit_init"
@@ -120,7 +120,7 @@ apps:
 
       agent_card:
         description: >
-          Recipe Assistant — The front-door for all recipe requests. Understands user intent
+          Chef Agent — The front-door for all recipe requests. Understands user intent
           and delegates to specialized helper agents. Handles requests like "what can I cook?",
           "find recipes from my inventory", "suggest meals", "show me Italian recipes",
           "surprise me with a recipe", "can I swap butter?", "how many grams in 2 cups?",

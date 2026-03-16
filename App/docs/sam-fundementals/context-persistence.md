@@ -45,7 +45,7 @@ Agent (e.g. Recipe Research Agent)               <-- stores its own conversation
 | `web/src/hooks/useGatewaySession.js` | On mount, loads session ID from localStorage (or creates one), sets it on the `GatewayClient`, and persists it back. This is why conversations survive page refreshes. |
 | `web/src/api/gateway.js` | The `send()` method includes the session ID as `contextId` in every request to the gateway |
 
-Each page has its **own session key** (e.g. `recipe_gateway_session_id`, `inventory_gateway_session_id`), so the Recipe Agent and Inventory Agent maintain separate conversation histories.
+Each page has its **own session key** (e.g. `recipe_gateway_session_id`, `inventory_gateway_session_id`), so the Chef Agent and Pantry Agent maintain separate conversation histories.
 
 ## Session Storage Configuration (Backend)
 
