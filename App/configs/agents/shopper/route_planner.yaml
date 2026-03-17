@@ -140,4 +140,4 @@ apps:
 
       inter_agent_communication:
         allow_list: ["OrchestratorAgent", "ShopperAgent", "RecipeResearchAgent"]
-        request_timeout_seconds: 120
+        request_timeout_seconds: 600

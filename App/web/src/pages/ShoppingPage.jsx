@@ -68,8 +68,7 @@ export default function ShoppingPage() {
       prefillApplied.current = true;
       setChatOpen(true);
       setActiveTab("deals");
-      if (typingCleanup.current) typingCleanup.current();
-      typingCleanup.current = typeIntoChat(chat.setInput, `Find deals on ${itemsParam}`);
+      chat.setInput(`Find deals on ${itemsParam}`);
       // Clean up the URL
       setSearchParams({}, { replace: true });
     }

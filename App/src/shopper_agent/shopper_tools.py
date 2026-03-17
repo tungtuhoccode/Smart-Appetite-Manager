@@ -73,7 +73,7 @@ async def _call_llm(
     log_id: str,
     max_tokens: int = 4096,
     temperature: float = 0.1,
-    timeout: float = 90.0,
+    timeout: float = 180.0,
 ) -> Dict[str, Any]:
     """Make an OpenAI-compatible chat completion call. Returns parsed JSON or error dict."""
     url = f"{api_base}/v1/chat/completions"
@@ -109,6 +109,10 @@ async def _call_llm(
     except (KeyError, IndexError) as e:
         log.error(f"{log_id} Unexpected LLM response: {e}")
         return {"error": "Unexpected response from LLM."}
+
+    if content is None:
+        log.error(f"{log_id} LLM returned null content")
+        return {"error": "LLM returned empty/null content."}
 
     text = content.strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)

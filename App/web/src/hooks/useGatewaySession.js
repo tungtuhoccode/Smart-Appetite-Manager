@@ -12,13 +12,12 @@ export function useGatewaySession(client, storageKeys, defaultAgentName) {
   useEffect(() => {
     const savedGatewayUrl =
       localStorage.getItem(storageKeys.gatewayUrl) || "http://localhost:8000";
-    const savedSessionId =
-      localStorage.getItem(storageKeys.sessionId) || makeSessionId();
+    const newSessionId = makeSessionId();
 
     client.setGatewayUrl(savedGatewayUrl);
-    client.setSessionId(savedSessionId);
+    client.setSessionId(newSessionId);
     localStorage.setItem(storageKeys.gatewayUrl, savedGatewayUrl);
-    localStorage.setItem(storageKeys.sessionId, savedSessionId);
+    localStorage.setItem(storageKeys.sessionId, newSessionId);
     if (storageKeys.agentName) {
       localStorage.setItem(storageKeys.agentName, defaultAgentName);
     }
