@@ -5,5 +5,4 @@ description = "Solace Agent Mesh hackathon quickstart template"
 requires-python = "==3.11.*"
 dependencies = [
     "solace-agent-mesh==1.13.3",
-    "PyGithub==2.8.1",
 ]
