@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
+import { extractMessageTextParts } from "@/api/gateway";
 import { AGENTS } from "@/api/agents";
 import {
   responseToChatText,
@@ -22,10 +23,25 @@ import {
 const ROUTE_KEYWORDS =
   /\b(plan|route|optimi[sz]e|trip|fewest|stops|optimal|best route|shopping route|minimize|least stores)\b/i;
 
+const INVENTORY_API_URL =
+  import.meta.env.VITE_INVENTORY_API_URL || "http://localhost:8001";
+
+/**
+ * Fetch the pricing artifact via our inventory REST API.
+ * The Python tool saves it to disk; our API reads it directly from the filesystem.
+ */
+async function fetchPricingArtifact(sessionId) {
+  const url = `${INVENTORY_API_URL}/api/artifacts/${encodeURIComponent(sessionId)}/pricing-products.json`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data?.products ? data : null;
+}
+
 function detectAgent(prompt) {
   return ROUTE_KEYWORDS.test(prompt)
     ? AGENTS.ROUTE_PLANNER
-    : AGENTS.SHOPPER;
+    : AGENTS.LIVE_PRICING;
 }
 
 /**
@@ -56,6 +72,37 @@ export function useShoppingChat(client, options = {}) {
   const trackerRef = useRef(null);
   const msgIdRef = useRef(1);
 
+  // Streaming message refs — accumulate text parts (like SAM webui), throttle UI updates
+  const streamingMsgIdRef = useRef(null);
+  const streamingPartsRef = useRef([]);
+  const throttleTimerRef = useRef(null);
+
+  const flushStreamingText = useCallback(() => {
+    const text = streamingPartsRef.current.join("");
+    if (!text) return;
+    if (!streamingMsgIdRef.current) {
+      const id = `${idPrefix}-streaming-${msgIdRef.current++}`;
+      streamingMsgIdRef.current = id;
+      setMessages((prev) => [...prev, {
+        id, role: "assistant", text, isStreaming: true,
+      }]);
+    } else {
+      const sid = streamingMsgIdRef.current;
+      setMessages((prev) => prev.map((m) =>
+        m.id === sid ? { ...m, text } : m
+      ));
+    }
+  }, [idPrefix]);
+
+  const cleanupStreaming = useCallback(() => {
+    if (throttleTimerRef.current) {
+      clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = null;
+    }
+    streamingMsgIdRef.current = null;
+    streamingPartsRef.current = [];
+  }, []);
+
   /**
    * Internal: send a prompt to a specific agent and append the response
    * to the shared message list. Returns the parsed message data.
@@ -64,10 +111,12 @@ export function useShoppingChat(client, options = {}) {
     async (prompt, agentName, { isAutoFollowUp = false } = {}) => {
       const tracker = createExecutionTimelineTracker();
       trackerRef.current = tracker;
+      let pricingArtifact = null;
 
       const agentLabel =
-        agentName === AGENTS.ROUTE_PLANNER ? "Route Planner" : "Grocery Scout";
+        agentName === AGENTS.ROUTE_PLANNER ? "Route Planner" : "Live Pricing";
 
+      cleanupStreaming();
       appendExecutionLifecycleStep(tracker, {
         status: "info",
         title: isAutoFollowUp
@@ -77,14 +126,24 @@ export function useShoppingChat(client, options = {}) {
       setActiveTimeline(getExecutionTimelineSnapshot(tracker));
 
       try {
-        // Append trigger keyword so ShopperAgent includes structured map data
-        const wirePrompt =
-          agentName === AGENTS.SHOPPER
-            ? `${prompt}\n\n[show-deals-data]`
-            : prompt;
+        const wirePrompt = prompt;
 
         const result = await client.send(wirePrompt, agentName, {
           onStatus: (statusText, payload) => {
+            // Accumulate text parts from the SSE payload (SAM message structure)
+            const taskState = payload?.result?.status?.state;
+            if (taskState === "working") {
+              const partText = extractMessageTextParts(payload);
+              if (partText) {
+                streamingPartsRef.current.push(partText);
+                if (!throttleTimerRef.current) {
+                  throttleTimerRef.current = setTimeout(() => {
+                    throttleTimerRef.current = null;
+                    flushStreamingText();
+                  }, 150);
+                }
+              }
+            }
             const changed = applyStatusUpdateToTimeline(
               tracker,
               statusText,
@@ -116,19 +175,51 @@ export function useShoppingChat(client, options = {}) {
         const { routeData: routePlanData, cleanText } =
           extractRoutePlanData(afterMap);
 
+        // Fetch pricing artifact via REST after LivePricingAgent responds
+        if (agentName === AGENTS.LIVE_PRICING) {
+          try {
+            const sessionId = client.getSessionId();
+            const fetched = await fetchPricingArtifact(sessionId);
+            if (fetched?.products) {
+              pricingArtifact = fetched;
+              console.log("[useShoppingChat] Fetched pricing artifact via REST:", fetched.store, fetched.products?.length, "products");
+            }
+          } catch (e) {
+            console.warn("[useShoppingChat] REST artifact fetch failed:", e);
+          }
+        }
+
+        // Update streaming message in-place or create a new one
+        const streamingId = streamingMsgIdRef.current;
+        const streamedText = streamingPartsRef.current.join("");
+        // Streamed text already contains the full response — use it directly
+        const finalText = (streamingId && streamedText) ? streamedText : cleanText;
+
         const msgData = {
-          id: `${idPrefix}-assistant-${msgIdRef.current++}`,
           role: "assistant",
-          text: cleanText,
+          text: finalText,
           rawText,
           timeline,
           recipeData,
           shopperMapData,
           routePlanData,
+          pricingData: pricingArtifact,
           agentName,
         };
 
-        setMessages((prev) => [...prev, msgData]);
+        if (streamingId) {
+          setMessages((prev) => prev.map((m) =>
+            m.id === streamingId
+              ? { ...m, ...msgData, isStreaming: false }
+              : m
+          ));
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            { id: `${idPrefix}-assistant-${msgIdRef.current++}`, ...msgData },
+          ]);
+        }
+        cleanupStreaming();
         return msgData;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -140,21 +231,32 @@ export function useShoppingChat(client, options = {}) {
         });
         const timeline = getExecutionTimelineSnapshot(tracker);
 
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `${idPrefix}-error-${msgIdRef.current++}`,
-            role: "assistant",
-            text: `Request failed: ${message}`,
-            timeline,
-            agentName,
-          },
-        ]);
+        const streamingId = streamingMsgIdRef.current;
+        const errorText = `Request failed: ${message}`;
+        if (streamingId) {
+          setMessages((prev) => prev.map((m) =>
+            m.id === streamingId
+              ? { ...m, text: (streamingPartsRef.current.join("") || "") + "\n\n" + errorText, isStreaming: false, timeline, agentName }
+              : m
+          ));
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `${idPrefix}-error-${msgIdRef.current++}`,
+              role: "assistant",
+              text: errorText,
+              timeline,
+              agentName,
+            },
+          ]);
+        }
         toast.error(`${agentLabel} failed`, { description: message });
+        cleanupStreaming();
         return null;
       }
     },
-    [client, idPrefix]
+    [client, idPrefix, flushStreamingText, cleanupStreaming]
   );
 
   /**
@@ -185,8 +287,9 @@ export function useShoppingChat(client, options = {}) {
       trackerRef.current = null;
       setSending(false);
       setActiveTimeline([]);
+      cleanupStreaming();
     }
-  }, [client, input, sending, idPrefix, onComplete, sendToAgent]);
+  }, [client, input, sending, idPrefix, onComplete, sendToAgent, cleanupStreaming]);
 
   return {
     messages,

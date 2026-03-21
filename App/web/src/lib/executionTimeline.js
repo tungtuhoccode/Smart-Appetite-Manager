@@ -280,12 +280,8 @@ export function applyStatusUpdateToTimeline(tracker, text, payload) {
     changed = applySignal(tracker, signal) || changed;
   }
 
-  if (signals.length === 0) {
-    const trimmed = normalizeText(text);
-    if (trimmed && trimmed.length <= MAX_TEXT_STEP_LENGTH) {
-      changed = addAgentStatusStep(tracker, trimmed) || changed;
-    }
-  }
+  // Only show structured signals in the timeline — skip raw agent text
+  // to avoid cluttering the progress view with streaming content.
 
   return changed;
 }

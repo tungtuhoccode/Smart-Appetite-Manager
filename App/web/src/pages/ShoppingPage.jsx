@@ -12,6 +12,8 @@ import { StoreMap } from "@/components/shopping/StoreMap";
 import { StoreDealCard } from "@/components/shopping/StoreDealCard";
 import { RouteScoreCard } from "@/components/shopping/RouteScoreCard";
 import { WeeklyDealsGrid } from "@/components/shopping/WeeklyDealsGrid";
+import { DealProductsGrid } from "@/components/shopping/DealProductsGrid";
+import { AiPicksSection } from "@/components/shopping/AiPicksSection";
 import { AssistantPanel, PANEL_THEMES } from "@/components/assistant/AssistantPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,7 +47,7 @@ const STORAGE_KEYS = {
 export default function ShoppingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { client } = useGateway();
-  useGatewaySession(client, STORAGE_KEYS, AGENTS.SHOPPER);
+  useGatewaySession(client, STORAGE_KEYS, AGENTS.LIVE_PRICING);
 
   const [activeTab, setActiveTab] = useState("weekly");
   const { chatOpen, setChatOpen } = useChatOpen();
@@ -88,7 +90,7 @@ export default function ShoppingPage() {
     for (let i = chat.messages.length - 1; i >= 0; i--) {
       const msg = chat.messages[i];
       if (
-        msg.agentName === AGENTS.SHOPPER &&
+        msg.agentName === AGENTS.LIVE_PRICING &&
         msg.shopperMapData &&
         Array.isArray(msg.shopperMapData.stores) &&
         msg.shopperMapData.stores.length > 0
@@ -99,7 +101,7 @@ export default function ShoppingPage() {
     // Fallback: re-parse from raw text
     for (let i = chat.messages.length - 1; i >= 0; i--) {
       const msg = chat.messages[i];
-      if (msg.rawText && msg.agentName === AGENTS.SHOPPER) {
+      if (msg.rawText && msg.agentName === AGENTS.LIVE_PRICING) {
         const { mapData } = extractShopperMapData(msg.rawText);
         if (mapData && Array.isArray(mapData.stores) && mapData.stores.length > 0) {
           return mapData;
@@ -145,6 +147,34 @@ export default function ShoppingPage() {
     return null;
   }, [chat.messages]);
 
+  // Collect ALL pricing results from messages (most recent first)
+  const pricingGroups = useMemo(() => {
+    const groups = [];
+    // Walk messages to pair user prompts with assistant pricing data
+    let lastUserText = "";
+    for (const msg of chat.messages) {
+      if (msg.role === "user") {
+        lastUserText = msg.text || "";
+      }
+      if (
+        msg.agentName === AGENTS.LIVE_PRICING &&
+        msg.pricingData &&
+        Array.isArray(msg.pricingData.products) &&
+        msg.pricingData.products.length > 0
+      ) {
+        groups.push({
+          id: msg.id,
+          query: msg.pricingData.prompt || lastUserText,
+          data: msg.pricingData,
+        });
+      }
+    }
+    return groups.reverse(); // most recent first
+  }, [chat.messages]);
+
+  // Convenience: latest pricing data for the empty-state check
+  const latestPricingData = pricingGroups.length > 0 ? pricingGroups[0].data : null;
+
   // Route planner's map data (from route planner agent responses)
   const latestRouteMapData = useMemo(() => {
     for (let i = chat.messages.length - 1; i >= 0; i--) {
@@ -171,7 +201,7 @@ export default function ShoppingPage() {
   }, [chat.messages]);
 
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] bg-[radial-gradient(circle_at_top_left,_rgba(230,248,255,0.95),_#fff_48%),linear-gradient(135deg,_rgba(241,250,255,0.9),_rgba(255,255,255,1))]">
+    <div className="min-h-[calc(100vh-3.5rem)]">
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         {/* Hero */}
         <Card className="border-blue-100 bg-gradient-to-br from-blue-50 via-sky-50 to-white">
@@ -274,7 +304,7 @@ export default function ShoppingPage() {
         {/* === DEALS TAB === */}
         {activeTab === "deals" && (
           <>
-            {latestMapData ? (
+            {latestMapData && (
               <>
                 <Card className="border-blue-100">
                   <CardHeader className="pb-3">
@@ -306,7 +336,23 @@ export default function ShoppingPage() {
                   ))}
                 </div>
               </>
-            ) : (
+            )}
+
+            {/* Pricing groups — each query gets its own AI picks + product grid */}
+            {pricingGroups.map((group) => (
+              <div key={group.id} className="space-y-4">
+                {group.data.ai_picks?.length > 0 && (
+                  <AiPicksSection
+                    aiPicks={group.data.ai_picks}
+                    prompt={group.data.prompt || group.query}
+                    stores={group.data.stores}
+                  />
+                )}
+                <DealProductsGrid pricingData={group.data} />
+              </div>
+            ))}
+
+            {!latestMapData && !latestPricingData && (
               <Card className="border-dashed border-blue-200">
                 <CardContent className="p-12 text-center">
                   <MapPinIcon className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />

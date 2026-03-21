@@ -140,9 +140,13 @@ export function AssistantPanel({
     storageKey: "assistant_sidebar_width",
   });
 
+  // Auto-scroll only if user is near the bottom (not scrolled up to read)
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    if (nearBottom) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [messages, open]);
 
@@ -288,10 +292,18 @@ export function AssistantPanel({
                   animatedIds.has(message.id) ? (
                     <MarkdownRenderer content={message.text} />
                   ) : (
-                    <TypewriterText
-                      content={message.text}
-                      onComplete={() => setAnimatedIds((prev) => new Set(prev).add(message.id))}
-                    />
+                    <>
+                      <TypewriterText
+                        content={message.text}
+                        isStreaming={message.isStreaming}
+                        onComplete={() => setAnimatedIds((prev) => new Set(prev).add(message.id))}
+                      />
+                      {message.isStreaming && (
+                        <span className="inline-flex gap-1 ml-1 align-middle">
+                          <span className="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-pulse" />
+                        </span>
+                      )}
+                    </>
                   )
                 ) : (
                   message.text

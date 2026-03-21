@@ -135,7 +135,7 @@
 
 @media (min-width: 640px) {
   body.inventory-chat-open .inventory-chat-shiftable {
-    margin-right: var(--inventory-assistant-width);
+    margin-right: min(var(--inventory-assistant-width), 760px);
   }
   body.inventory-chat-open .chat-hide-branding {
     display: none;
@@ -192,3 +192,13 @@
 .dash-delay-4 { animation-delay: 0.28s; }
 .dash-delay-5 { animation-delay: 0.36s; }
 .dash-delay-6 { animation-delay: 0.44s; }
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes dealCardIn {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}

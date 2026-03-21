@@ -21,6 +21,7 @@ export const AGENTS = {
   RECIPE_INVENTORY_SEARCH: "RecipeInventorySearch",
   RECIPE_GENERAL_SEARCH: "RecipeGeneralSearch",
   ROUTE_PLANNER: "RoutePlannerAgent",
+  LIVE_PRICING: "LivePricingAgent",
   RECIPE_COOKING: "RecipeCookingSpecialist",
 };
 

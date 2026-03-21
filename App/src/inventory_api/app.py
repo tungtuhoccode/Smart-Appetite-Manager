@@ -340,3 +340,87 @@ async def remove_shopping_item(item_id: int) -> Dict[str, Any]:
 @app.delete("/api/shopping-list/checked")
 async def clear_checked_items() -> Dict[str, Any]:
     return await clear_checked_shopping_list_items(tool_config=_tool_config())
+
+
+# ── SAM Artifact proxy ──────────────────────────────────────────────────
+# Reads artifacts saved by SAM agents from the filesystem.
+# Path pattern: /tmp/samv2/{user}/{session_id}/{filename}/{version}
+
+import json as _json
+from fastapi.responses import JSONResponse
+
+_ARTIFACT_BASE = Path(os.environ.get("SAM_ARTIFACT_BASE_PATH", "/tmp/samv2"))
+_ARTIFACT_USER = os.environ.get("SAM_ARTIFACT_USER", "sam_dev_user")
+
+
+@app.get("/api/artifacts/{session_id}/{filename}")
+async def get_artifact(session_id: str, filename: str):
+    """Read a SAM artifact from the filesystem.
+
+    For pricing-products.json, tool calls may run in parallel so each
+    store ends up in a separate version. This endpoint merges ALL versions
+    into a single response with combined stores and products.
+    """
+    session_dir = _ARTIFACT_BASE / _ARTIFACT_USER / session_id / filename
+    if not session_dir.is_dir():
+        return JSONResponse({"error": "Artifact not found"}, status_code=404)
+
+    version_nums = sorted(
+        [int(f.name) for f in session_dir.iterdir() if f.name.isdigit()]
+    )
+    if not version_nums:
+        return JSONResponse({"error": "No versions found"}, status_code=404)
+
+    # If only one version, return it directly
+    if len(version_nums) == 1:
+        content = (session_dir / str(version_nums[0])).read_text(encoding="utf-8")
+        try:
+            return JSONResponse(_json.loads(content))
+        except _json.JSONDecodeError:
+            return JSONResponse({"raw": content})
+
+    # Multiple versions: merge all stores, products, and keep latest ai_picks
+    seen_stores = {}  # store_name -> store_info
+    all_products = []
+    ai_picks = None
+    prompt = ""
+    for v in version_nums:
+        try:
+            data = _json.loads((session_dir / str(v)).read_text(encoding="utf-8"))
+        except (_json.JSONDecodeError, OSError):
+            continue
+
+        for s in data.get("stores", []):
+            seen_stores[s["store"]] = s
+        # Handle legacy single-store format
+        if "store" in data and data["store"] not in seen_stores:
+            seen_stores[data["store"]] = {
+                "store": data["store"],
+                "store_logo": data.get("store_logo", ""),
+                "store_url": data.get("store_url", ""),
+            }
+
+        for p in data.get("products", []):
+            all_products.append(p)
+
+        # Keep the latest ai_picks and prompt (from submit_ai_picks)
+        if data.get("ai_picks"):
+            ai_picks = data["ai_picks"]
+        if data.get("prompt"):
+            prompt = data["prompt"]
+
+    # Deduplicate products by (store, name, price)
+    unique = {}
+    for p in all_products:
+        key = (p.get("store", ""), p.get("name", ""), p.get("price", ""))
+        unique[key] = p
+
+    result = {
+        "stores": list(seen_stores.values()),
+        "products": list(unique.values()),
+    }
+    if ai_picks:
+        result["ai_picks"] = ai_picks
+    if prompt:
+        result["prompt"] = prompt
+    return JSONResponse(result)

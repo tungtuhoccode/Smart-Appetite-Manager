@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
+import { extractMessageTextParts } from "@/api/gateway";
 import { responseToChatText, extractRecipeData, extractShopperMapData, extractRoutePlanData } from "@/lib/parseResponse";
 import { normalizeAgentRecipeList } from "@/lib/mealdb";
 import {
@@ -42,6 +43,37 @@ export function useAssistantChat(client, agentName, options = {}) {
   const trackerRef = useRef(null);
   const msgIdRef = useRef(Date.now());
 
+  // Streaming message refs — accumulate text parts (like SAM webui), throttle UI updates
+  const streamingMsgIdRef = useRef(null);
+  const streamingPartsRef = useRef([]);
+  const throttleTimerRef = useRef(null);
+
+  const flushStreamingText = useCallback(() => {
+    const text = streamingPartsRef.current.join("");
+    if (!text) return;
+    if (!streamingMsgIdRef.current) {
+      const id = `${idPrefix}-streaming-${msgIdRef.current++}`;
+      streamingMsgIdRef.current = id;
+      setMessages((prev) => [...prev, {
+        id, role: "assistant", text, isStreaming: true,
+      }]);
+    } else {
+      const sid = streamingMsgIdRef.current;
+      setMessages((prev) => prev.map((m) =>
+        m.id === sid ? { ...m, text } : m
+      ));
+    }
+  }, [idPrefix]);
+
+  const cleanupStreaming = useCallback(() => {
+    if (throttleTimerRef.current) {
+      clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = null;
+    }
+    streamingMsgIdRef.current = null;
+    streamingPartsRef.current = [];
+  }, []);
+
   const send = useCallback(async (overridePrompt, messageMetadata) => {
     const prompt = (overridePrompt ?? input).trim();
     if (!prompt || sending) return;
@@ -54,6 +86,7 @@ export function useAssistantChat(client, agentName, options = {}) {
       title: "Task submitted",
     });
     setActiveTimeline(getExecutionTimelineSnapshot(tracker));
+    cleanupStreaming();
 
     setMessages((prev) => [
       ...prev,
@@ -72,6 +105,20 @@ export function useAssistantChat(client, agentName, options = {}) {
       const result = await client.send(wirePrompt, agentName, {
         onStatus: (statusText, payload) => {
           if (statusText) statusTexts.push(statusText);
+          // Accumulate text parts from the SSE payload (SAM message structure)
+          const taskState = payload?.result?.status?.state;
+          if (taskState === "working") {
+            const partText = extractMessageTextParts(payload);
+            if (partText) {
+              streamingPartsRef.current.push(partText);
+              if (!throttleTimerRef.current) {
+                throttleTimerRef.current = setTimeout(() => {
+                  throttleTimerRef.current = null;
+                  flushStreamingText();
+                }, 150);
+              }
+            }
+          }
           const changed = applyStatusUpdateToTimeline(tracker, statusText, payload);
           if (changed) {
             setActiveTimeline(getExecutionTimelineSnapshot(tracker));
@@ -132,20 +179,44 @@ export function useAssistantChat(client, agentName, options = {}) {
       }
       console.log("[RecipeDebug] Final recipeData count:", recipeData?.length ?? "null");
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `${idPrefix}-assistant-${msgIdRef.current++}`,
-          role: "assistant",
-          text: cleanText,
-          rawText,
-          timeline,
-          recipeData,
-          shopperMapData,
-          routePlanData,
-          ...messageMetadata,
-        },
-      ]);
+      // Update streaming message in-place or create a new one
+      const streamingId = streamingMsgIdRef.current;
+      const streamedText = streamingPartsRef.current.join("");
+      // Streamed text already contains the full response — use it directly
+      const finalText = (streamingId && streamedText) ? streamedText : cleanText;
+
+      if (streamingId) {
+        setMessages((prev) => prev.map((m) =>
+          m.id === streamingId
+            ? {
+                ...m,
+                text: finalText,
+                isStreaming: false,
+                rawText,
+                timeline,
+                recipeData,
+                shopperMapData,
+                routePlanData,
+                ...messageMetadata,
+              }
+            : m
+        ));
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `${idPrefix}-assistant-${msgIdRef.current++}`,
+            role: "assistant",
+            text: finalText,
+            rawText,
+            timeline,
+            recipeData,
+            shopperMapData,
+            routePlanData,
+            ...messageMetadata,
+          },
+        ]);
+      }
       setActiveTimeline([]);
       onComplete?.();
     } catch (err) {
@@ -158,22 +229,33 @@ export function useAssistantChat(client, agentName, options = {}) {
       });
       const timeline = getExecutionTimelineSnapshot(tracker);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `${idPrefix}-error-${msgIdRef.current++}`,
-          role: "assistant",
-          text: `Request failed: ${message}`,
-          timeline,
-        },
-      ]);
+      const streamingId = streamingMsgIdRef.current;
+      const errorText = `Request failed: ${message}`;
+      if (streamingId) {
+        setMessages((prev) => prev.map((m) =>
+          m.id === streamingId
+            ? { ...m, text: (streamingPartsRef.current.join("") || "") + "\n\n" + errorText, isStreaming: false, timeline }
+            : m
+        ));
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `${idPrefix}-error-${msgIdRef.current++}`,
+            role: "assistant",
+            text: errorText,
+            timeline,
+          },
+        ]);
+      }
       setActiveTimeline([]);
       toast.error(errorLabel, { description: message });
     } finally {
       trackerRef.current = null;
+      cleanupStreaming();
       setSending(false);
     }
-  }, [client, agentName, input, sending, idPrefix, errorLabel, onComplete]);
+  }, [client, agentName, input, sending, idPrefix, errorLabel, onComplete, flushStreamingText, cleanupStreaming]);
 
   return {
     messages,

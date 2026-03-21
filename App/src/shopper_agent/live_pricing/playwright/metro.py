@@ -24,10 +24,17 @@ _JS_EXTRACT = """
             var srcset = imgEl.getAttribute('srcset') || '';
             imgSrc = srcset ? srcset.split(',')[0].trim().split(' ')[0] : (imgEl.getAttribute('src') || '');
         }
+        var sizingEl = t.querySelector('.head__unit-details');
+        var sizingText = sizingEl ? sizingEl.innerText.trim() : '';
+        var unitPriceEl = t.querySelector('.pricing__secondary-price');
+        var unitPriceText = unitPriceEl ? unitPriceEl.innerText.trim() : '';
+        var mainPriceEl = pricingEl ? pricingEl.querySelector('[data-main-price]') : null;
+        var mainPrice = mainPriceEl ? mainPriceEl.getAttribute('data-main-price') : '';
         results.push({
             code: t.dataset.productCode || '',
             name: t.dataset.productName || '',
             nameEn: t.dataset.productNameEn || '',
+            brand: t.dataset.productBrand || '',
             category: t.dataset.productCategory || '',
             categoryEn: t.dataset.productCategoryEn || '',
             categoryUrl: t.dataset.categoryUrl || '',
@@ -35,6 +42,9 @@ _JS_EXTRACT = """
             minQty: t.dataset.minQty || '',
             maxQty: t.dataset.maxQty || '',
             pricingText: pricingText,
+            packageSizing: sizingText,
+            unitPriceText: unitPriceText,
+            mainPrice: mainPrice,
             imageUrl: imgSrc,
         });
     }
@@ -46,20 +56,32 @@ _JS_EXTRACT = """
 _PRICE_UNIT_RE = re.compile(
     r"\$(\d+\.?\d*)\s*/\s*(kg|lb|100\s*g)\.?", re.IGNORECASE
 )
+# Matches "$0.33 /un." or "$0.33/un"
+_UNIT_PRICE_RE = re.compile(
+    r"\$(\d+\.?\d*)\s*/\s*(un|unit)\.?", re.IGNORECASE
+)
 # Matches "$23.22" standalone (avg ea price)
 _FLAT_PRICE_RE = re.compile(r"\$(\d+\.?\d*)")
 
 
-def _parse_metro_pricing(pricing_text: str) -> Dict[str, Any]:
+def _parse_metro_pricing(pricing_text: str, unit_price_text: str = "") -> Dict[str, Any]:
     """Parse Metro's pricing text into structured fields."""
     result: Dict[str, Any] = {
         "display_price": None,
         "price_per_kg": None,
         "price_per_lb": None,
+        "price_per_unit": None,
         "is_avg_price": False,
     }
     if not pricing_text:
         return result
+
+    # Check for per-unit pricing (e.g. "$0.33 /un.")
+    # Prefer unit_price_text (from secondary-price element) over main pricing text
+    unit_source = unit_price_text or pricing_text
+    unit_match = _UNIT_PRICE_RE.search(unit_source)
+    if unit_match:
+        result["price_per_unit"] = float(unit_match.group(1))
 
     unit_matches = _PRICE_UNIT_RE.findall(pricing_text)
     for price_str, unit in unit_matches:
@@ -71,7 +93,7 @@ def _parse_metro_pricing(pricing_text: str) -> Dict[str, Any]:
         elif unit_lower == "lb":
             result["price_per_lb"] = price
         elif unit_lower == "100g":
-            result["price_per_kg"] = price * 10
+            result["price_per_kg"] = round(price * 10, 2)
             result["display_price"] = f"${price_str}/100g"
 
     if not unit_matches:
@@ -84,16 +106,44 @@ def _parse_metro_pricing(pricing_text: str) -> Dict[str, Any]:
     return result
 
 
+# Matches volume sizing like "4 L", "2 L", "1.5 L", "500 mL", "750 ml"
+_VOLUME_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(L|mL|ml|l)\b", re.IGNORECASE)
+
+
+def _compute_price_per_litre(display_price: str | None, sizing: str) -> float | None:
+    """Derive $/L from a flat price and volume sizing (e.g. '$7.19' + '4 L')."""
+    if not display_price or not sizing:
+        return None
+    price_match = _FLAT_PRICE_RE.search(display_price)
+    vol_match = _VOLUME_RE.search(sizing)
+    if not price_match or not vol_match:
+        return None
+    price = float(price_match.group(1))
+    volume = float(vol_match.group(1))
+    unit = vol_match.group(2).lower()
+    if unit in ("ml",):
+        volume /= 1000.0
+    if volume <= 0:
+        return None
+    return round(price / volume, 2)
+
+
 def _parse_metro_product(raw: Dict[str, Any], product_url_template: str = "") -> Dict[str, Any]:
     """Convert a raw Metro DOM product into a clean dict."""
-    pricing = _parse_metro_pricing(raw.get("pricingText", ""))
+    pricing = _parse_metro_pricing(raw.get("pricingText", ""), raw.get("unitPriceText", ""))
     product_id = raw.get("code", "")
     tmpl = product_url_template or _PRODUCT_URL
     link = tmpl.format(product_id=product_id) if product_id else ""
 
+    sizing = raw.get("packageSizing", "")
+    price_per_L = None
+    # Compute $/L when the site gives a flat price + volume sizing but no per-weight price
+    if not pricing.get("price_per_kg") and not pricing.get("price_per_unit"):
+        price_per_L = _compute_price_per_litre(pricing.get("display_price"), sizing)
+
     return {
         "product_id": product_id,
-        "brand": "",
+        "brand": raw.get("brand", ""),
         "title": raw.get("name") or raw.get("nameEn", ""),
         "name": raw.get("name") or raw.get("nameEn", ""),
         "description": "",
@@ -102,8 +152,10 @@ def _parse_metro_product(raw: Dict[str, Any], product_url_template: str = "") ->
         "was_price": None,
         "price_per_kg": pricing.get("price_per_kg"),
         "price_per_lb": pricing.get("price_per_lb"),
+        "price_per_unit": pricing.get("price_per_unit"),
+        "price_per_L": price_per_L,
         "is_avg_price": pricing.get("is_avg_price", False),
-        "package_sizing": "",
+        "package_sizing": sizing,
         "category": raw.get("category") or raw.get("categoryEn", ""),
         "weighted": raw.get("isWeighted", "false").lower() == "true",
         "deal": None,

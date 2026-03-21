@@ -1,8 +1,10 @@
-import React from "react";
+import React, { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { StoreMap } from "@/components/shopping/StoreMap";
+import { ZoomIn } from "lucide-react";
+import { ResizableTable } from "@/components/ui/ResizableTable";
 
 function tryParseMapData(raw) {
   try {
@@ -30,8 +32,24 @@ function isImageHref(href) {
 }
 
 export function MarkdownRenderer({ content, className = "" }) {
+  const [lightbox, setLightbox] = useState(null);
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+
   return (
     <div className={`text-sm leading-relaxed text-foreground break-words ${className}`}>
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm cursor-pointer"
+          onClick={closeLightbox}
+        >
+          <img
+            src={lightbox.src}
+            alt={lightbox.alt}
+            className="max-w-[90vw] max-h-[90vh] rounded-lg border shadow-2xl object-contain bg-white"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw]}
@@ -57,13 +75,11 @@ export function MarkdownRenderer({ content, className = "" }) {
           ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1">{children}</ol>,
           li: ({ children }) => <li>{children}</li>,
           table: ({ children }) => (
-            <div className="my-2 overflow-x-auto rounded-md border">
-              <table className="w-full text-xs border-collapse">{children}</table>
-            </div>
+            <ResizableTable>{children}</ResizableTable>
           ),
           thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
           th: ({ children }) => <th className="px-2 py-1.5 text-left font-semibold whitespace-nowrap border-b">{children}</th>,
-          td: ({ children }) => <td className="px-2 py-1.5 border-b whitespace-nowrap">{children}</td>,
+          td: ({ children }) => <td className="px-2 py-1.5 border-b">{children}</td>,
           strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
           a: ({ href, children }) => {
             const showImagePreview = isImageHref(href);
@@ -111,13 +127,21 @@ export function MarkdownRenderer({ content, className = "" }) {
               <code className={className}>{children}</code>
             ),
           img: ({ src, alt }) => (
-            <img
-              src={src}
-              alt={alt || "Markdown image"}
-              className="rounded-md border object-contain bg-gray-50"
-              style={{ width: 140, maxHeight: 120 }}
-              loading="lazy"
-            />
+            <span
+              className="relative inline-block group cursor-pointer"
+              onClick={() => setLightbox({ src, alt: alt || "Markdown image" })}
+            >
+              <img
+                src={src}
+                alt={alt || "Markdown image"}
+                className="rounded-md border object-contain bg-gray-50"
+                style={{ width: 60, maxHeight: 120 }}
+                loading="lazy"
+              />
+              <span className="absolute inset-0 flex items-center justify-center rounded-md bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                <ZoomIn className="w-5 h-5 text-white" />
+              </span>
+            </span>
           ),
         }}
       >

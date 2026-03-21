@@ -272,4 +272,20 @@ export function getGatewayClient(gatewayUrl) {
   return clientInstance;
 }
 
-export { makeId, extractDisplayText };
+/**
+ * Extract text parts from an SSE status-update payload following the SAM
+ * message structure: payload.result.status.message.parts[].
+ *
+ * Only collects parts with kind === "text", skipping data/progress parts.
+ * Returns the raw text without trimming so markdown formatting is preserved.
+ */
+function extractMessageTextParts(payload) {
+  const parts = payload?.result?.status?.message?.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .filter((p) => p.kind === "text" || p.type === "text")
+    .map((p) => p.text ?? p.content ?? "")
+    .join("");
+}
+
+export { makeId, extractDisplayText, extractMessageTextParts };
