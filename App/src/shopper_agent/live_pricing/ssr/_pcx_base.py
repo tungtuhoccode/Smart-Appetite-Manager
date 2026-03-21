@@ -50,7 +50,61 @@ def _extract_products_from_next_data(raw_json: str) -> List[Dict[str, Any]]:
     return products
 
 
-def parse_pcx_product(raw: Dict[str, Any]) -> Dict[str, Any]:
+# Patterns for parsing unit prices from PCX packageSizing strings
+# "$0.33/1ea" or "$0.58/1ea"
+_PCX_PER_EA_RE = re.compile(r"\$(\d+\.?\d*)/1?ea", re.IGNORECASE)
+# "$0.93/100g" or "$1.99/100g"
+_PCX_PER_100G_RE = re.compile(r"\$(\d+\.?\d*)/100g", re.IGNORECASE)
+# "$0.16/100ml" or "$0.41/100ml"
+_PCX_PER_100ML_RE = re.compile(r"\$(\d+\.?\d*)/100ml", re.IGNORECASE)
+# "$11.00/1kg" or "$11.00/kg"
+_PCX_PER_KG_RE = re.compile(r"\$(\d+\.?\d*)/1?kg", re.IGNORECASE)
+# "$4.99/1lb" or "$4.99/lb"
+_PCX_PER_LB_RE = re.compile(r"\$(\d+\.?\d*)/1?lb", re.IGNORECASE)
+
+
+def _parse_pcx_unit_prices(sizing: str) -> Dict[str, Optional[float]]:
+    """Parse unit prices from PCX packageSizing string.
+
+    Examples:
+        "12 ea, $0.33/1ea"        -> price_per_unit=0.33
+        "4 l, $0.16/100ml"        -> price_per_L=1.6
+        "700 g, $0.93/100g"       -> price_per_kg=9.3
+        "$11.00/1kg $4.99/1lb"    -> price_per_kg=11.0, price_per_lb=4.99
+    """
+    result: Dict[str, Optional[float]] = {
+        "price_per_unit": None,
+        "price_per_kg": None,
+        "price_per_lb": None,
+        "price_per_L": None,
+    }
+    if not sizing:
+        return result
+
+    m = _PCX_PER_EA_RE.search(sizing)
+    if m:
+        result["price_per_unit"] = float(m.group(1))
+
+    m = _PCX_PER_100G_RE.search(sizing)
+    if m:
+        result["price_per_kg"] = round(float(m.group(1)) * 10, 2)
+
+    m = _PCX_PER_100ML_RE.search(sizing)
+    if m:
+        result["price_per_L"] = round(float(m.group(1)) * 10, 2)
+
+    m = _PCX_PER_KG_RE.search(sizing)
+    if m:
+        result["price_per_kg"] = float(m.group(1))
+
+    m = _PCX_PER_LB_RE.search(sizing)
+    if m:
+        result["price_per_lb"] = float(m.group(1))
+
+    return result
+
+
+def parse_pcx_product(raw: Dict[str, Any], base_url: str = "") -> Dict[str, Any]:
     """Convert a raw PCX product object into a clean dict."""
     pricing = raw.get("pricing", {})
     deal = raw.get("deal")
@@ -58,6 +112,9 @@ def parse_pcx_product(raw: Dict[str, Any]) -> Dict[str, Any]:
     ratings = raw.get("ratings") or {}
     promotions = raw.get("promotions") or []
     images = raw.get("productImage") or [{}]
+
+    sizing = raw.get("packageSizing", "")
+    unit_prices = _parse_pcx_unit_prices(sizing)
 
     return {
         "product_id": raw.get("productId", ""),
@@ -70,10 +127,14 @@ def parse_pcx_product(raw: Dict[str, Any]) -> Dict[str, Any]:
         "display_price": pricing.get("displayPrice"),
         "was_price": pricing.get("wasPrice"),
         "member_only_price": pricing.get("memberOnlyPrice"),
-        "package_sizing": raw.get("packageSizing", ""),
+        "package_sizing": sizing,
         "uom": raw.get("uom", ""),
         "pricing_unit": pricing_units.get("unit"),
         "pricing_unit_type": pricing_units.get("type"),
+        "price_per_unit": unit_prices["price_per_unit"],
+        "price_per_kg": unit_prices["price_per_kg"],
+        "price_per_lb": unit_prices["price_per_lb"],
+        "price_per_L": unit_prices["price_per_L"],
         "min_order_quantity": pricing_units.get("minOrderQuantity"),
         "max_order_quantity": pricing_units.get("maxOrderQuantity"),
         "weighted": pricing_units.get("weighted", False),
@@ -86,7 +147,7 @@ def parse_pcx_product(raw: Dict[str, Any]) -> Dict[str, Any]:
         "review_count": ratings.get("reviewCount"),
         "image_url": images[0].get("mediumUrl", ""),
         "image_url_large": images[0].get("largeUrl", ""),
-        "link": raw.get("link", ""),
+        "link": f"{base_url}{raw.get('link', '')}" if raw.get("link") and not raw.get("link", "").startswith("http") else raw.get("link", ""),
         "badge": raw.get("textBadge") or raw.get("productBadge") or None,
     }
 
@@ -140,6 +201,11 @@ async def fetch_pcx_prices(
     log_id = f"[LivePricing:{store_name}]"
     log.info(f"{log_id} Searching for: {query} (max_results={max_results})")
 
+    # Derive base URL (e.g. "https://www.loblaws.ca") from search_url
+    from urllib.parse import urlparse
+    parsed = urlparse(search_url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
     pages_needed = min(
         (max_results + _PRODUCTS_PER_PAGE - 1) // _PRODUCTS_PER_PAGE, _MAX_PAGES
     )
@@ -160,7 +226,7 @@ async def fetch_pcx_prices(
                     if pid in seen_ids:
                         continue
                     seen_ids.add(pid)
-                    all_products.append(parse_pcx_product(raw))
+                    all_products.append(parse_pcx_product(raw, base_url))
                     new_count += 1
 
                     if len(all_products) >= max_results:

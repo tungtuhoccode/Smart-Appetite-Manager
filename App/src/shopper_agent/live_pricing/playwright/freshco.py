@@ -6,6 +6,7 @@ We intercept the Algolia response in-flight to extract structured product data.
 """
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
@@ -86,6 +87,36 @@ def _parse_freshco_product(hit: Dict[str, Any]) -> Dict[str, Any]:
     if not package_sizing and uom == "KG" and price is not None:
         package_sizing = f"${price:.2f}/kg"
 
+    # Compute unit prices for non-weighted items from size string
+    price_per_kg = price if uom == "KG" else None
+    price_per_unit = None
+    price_per_L = None
+    actual_price = price  # original numeric price before sale override
+    if not was_price and price is not None:
+        actual_price = price
+    elif was_price and display_price:
+        # Use the sale price for unit price computation
+        m = re.search(r"\$(\d+\.?\d*)", display_price)
+        if m:
+            actual_price = float(m.group(1))
+
+    if uom != "KG" and actual_price and size:
+        # Parse size like "750 g", "1.5 L", "500 mL", "12 un", "6 pk"
+        size_match = re.search(r"(\d+(?:\.\d+)?)\s*(g|kg|lb|ml|mL|L|un|pk)\b", size, re.IGNORECASE)
+        if size_match:
+            amount = float(size_match.group(1))
+            unit_str = size_match.group(2).lower()
+            if unit_str == "g" and amount > 0:
+                price_per_kg = round(actual_price / amount * 1000, 2)
+            elif unit_str == "kg" and amount > 0:
+                price_per_kg = round(actual_price / amount, 2)
+            elif unit_str in ("ml",) and amount > 0:
+                price_per_L = round(actual_price / amount * 1000, 2)
+            elif unit_str == "l" and amount > 0:
+                price_per_L = round(actual_price / amount, 2)
+            elif unit_str in ("un", "pk") and amount > 0:
+                price_per_unit = round(actual_price / amount, 2)
+
     return {
         "product_id": hit.get("objectID", ""),
         "brand": brand,
@@ -95,7 +126,9 @@ def _parse_freshco_product(hit: Dict[str, Any]) -> Dict[str, Any]:
         "price": display_price,
         "display_price": display_price,
         "was_price": was_price,
-        "price_per_kg": price if uom == "KG" else None,
+        "price_per_kg": price_per_kg,
+        "price_per_unit": price_per_unit,
+        "price_per_L": price_per_L,
         "is_avg_price": False,
         "package_sizing": package_sizing,
         "uom": uom,
