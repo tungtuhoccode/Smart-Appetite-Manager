@@ -1,7 +1,7 @@
 log:
   stdout_log_level: INFO
 
-!include ../../shared_config.yaml
+!include ../shared_config.yaml
 
 apps:
   - name: recipe-general-search_app
@@ -35,9 +35,28 @@ apps:
           with the relevant parameters (ingredients, diet, cuisine, intolerances, maxReadyTime).
           complex_search already returns full recipe info (ingredients, instructions, diets, etc.)
           so you do NOT need to call get_meal_details afterward.
+        - For general searches, use `sort_by="popularity"` and `sort_direction="desc"` by default.
+        - If the user mentions a meal type (breakfast, lunch, dinner, soup, dessert, appetizer,
+          salad, snack, etc.), pass `meal_type` to complex_search accordingly.
+          Examples: "breakfast ideas" → meal_type="breakfast", "soup recipes" → meal_type="soup",
+          "dessert" → meal_type="dessert", "quick dinner" → meal_type="main course".
         - If the user wants random inspiration ("surprise me", "random recipe") → use `get_random_meal`.
         - If the user provides a simple ingredient list → use `get_top_3_meals`, then call
           `get_meal_details_bulk` with the comma-separated IDs to fetch all details in ONE call.
+
+        CHIP → API PARAMETER MAPPING:
+        When the request contains a chip keyword, apply these parameter overrides:
+        - "quick dinners" / "under 30 minutes"  → max_ready_time=30, meal_type="main course"
+        - "vegetarian"                           → diet="vegetarian"
+        - "high protein" / "sorted by protein"  → query+="high protein", sort_by="protein", sort_direction="desc"
+        - "comfort food"                         → query+="comfort food"
+        - "one-pot meal" / "one pot"             → query+="one pot meal"
+        - "meal prep" / "batch cook"             → query+="meal prep", sort_by="time", sort_direction="asc"
+
+        SPICY PREFERENCE:
+        Spoonacular has no native spice-level filter. Map user preference via query string:
+        - "spicy"                                → append "spicy" to query
+        - "mild" / "not spicy"                   → append "mild" to query
 
         RECIPE DETAILS:
         - If the user asks for details on a specific recipe (by name or meal ID),

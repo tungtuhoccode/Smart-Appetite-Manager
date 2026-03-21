@@ -4,6 +4,7 @@ Inventory manager tools for SAM agents.
 Provides basic read/insert operations against a SQLite inventory database.
 """
 
+import json
 import logging
 import os
 import re
@@ -17,6 +18,38 @@ log = logging.getLogger(__name__)
 VALID_CATEGORIES = {
     "Produce", "Dairy", "Meat", "Seafood", "Grains", "Beverages",
     "Snacks", "Condiments", "Frozen", "Baking", "Canned", "Other",
+}
+
+# Volume units → mL
+_ML_PER_UNIT: Dict[str, float] = {
+    "ml": 1, "l": 1000, "tsp": 4.929, "teaspoon": 4.929, "teaspoons": 4.929,
+    "tbsp": 14.787, "tablespoon": 14.787, "tablespoons": 14.787,
+    "cup": 236.588, "cups": 236.588, "fl oz": 29.574,
+    "pint": 473.176, "quart": 946.353, "gallon": 3785.41,
+}
+
+# Weight units → grams
+_G_PER_UNIT: Dict[str, float] = {
+    "g": 1, "gram": 1, "grams": 1, "mg": 0.001, "kg": 1000,
+    "oz": 28.35, "ounce": 28.35, "ounces": 28.35,
+    "lb": 453.592, "lbs": 453.592, "pound": 453.592, "pounds": 453.592,
+}
+
+# Ingredient-specific unit conversions: {keyword: {from_unit: (to_unit, factor)}}
+INGREDIENT_CONVERSIONS: Dict[str, Dict[str, tuple]] = {
+    "garlic":   {"head": ("tbsp", 3.0),   "bulb": ("tbsp", 3.0),   "clove": ("tsp", 0.5)},
+    "onion":    {"head": ("g", 150.0),    "unit": ("g", 150.0),    "medium": ("g", 150.0), "large": ("g", 220.0)},
+    "broccoli": {"head": ("g", 350.0),    "unit": ("g", 350.0),    "crown": ("g", 200.0)},
+    "butter":   {"stick": ("g", 113.4),   "cube": ("g", 113.4)},
+    "lemon":    {"unit": ("tbsp", 3.0),   "whole": ("tbsp", 3.0)},
+    "lime":     {"unit": ("tbsp", 2.0),   "whole": ("tbsp", 2.0)},
+    "banana":   {"unit": ("g", 118.0),    "medium": ("g", 118.0),  "large": ("g", 136.0)},
+    "egg":      {"unit": ("g", 50.0),     "large": ("g", 50.0),    "medium": ("g", 44.0)},
+    "carrot":   {"unit": ("g", 61.0),     "medium": ("g", 61.0),   "large": ("g", 80.0)},
+    "potato":   {"unit": ("g", 150.0),    "medium": ("g", 150.0),  "large": ("g", 250.0), "small": ("g", 100.0)},
+    "tomato":   {"unit": ("g", 123.0),    "medium": ("g", 123.0),  "large": ("g", 180.0)},
+    "avocado":  {"unit": ("g", 136.0),    "medium": ("g", 136.0)},
+    "apple":    {"unit": ("g", 182.0),    "medium": ("g", 182.0)},
 }
 
 _DEFAULT_SHELF_LIFE_DAYS: Dict[str, int] = {
@@ -1013,6 +1046,103 @@ async def get_inventory_for_recipes(
             pass
 
 
+def _to_ml(amount: float, unit: str) -> Optional[float]:
+    factor = _ML_PER_UNIT.get(unit.lower())
+    return amount * factor if factor is not None else None
+
+
+def _to_g(amount: float, unit: str) -> Optional[float]:
+    factor = _G_PER_UNIT.get(unit.lower())
+    return amount * factor if factor is not None else None
+
+
+def _fuzzy_match_ingredient(inv_name: str, recipe_name: str) -> bool:
+    inv_lower = inv_name.lower()
+    rec_lower = recipe_name.lower()
+    if inv_lower == rec_lower:
+        return True
+    if inv_lower in rec_lower or rec_lower in inv_lower:
+        return True
+    inv_words = inv_lower.split()
+    rec_words = rec_lower.split()
+    if inv_words and rec_words and inv_words[0] == rec_words[0] and len(inv_words[0]) >= 4:
+        return True
+    for word in rec_words:
+        if len(word) >= 4 and word in inv_lower:
+            return True
+    return False
+
+
+def _check_ingredient_quantity(
+    recipe_name: str,
+    recipe_amount: Optional[float],
+    recipe_unit: str,
+    inv_quantity: float,
+    inv_unit: str,
+) -> str:
+    """Return 'sufficient', 'insufficient', or 'unit_uncertain'."""
+    TOLERANCE = 1.10  # 10% tolerance (inv must cover recipe_amount / TOLERANCE)
+
+    if not recipe_amount:
+        return "sufficient"
+
+    r_unit = (recipe_unit or "").strip().lower()
+    i_unit = (inv_unit or "").strip().lower()
+
+    # Both volume units
+    r_ml = _to_ml(recipe_amount, r_unit) if r_unit else None
+    i_ml = _to_ml(inv_quantity, i_unit) if i_unit else None
+    if r_ml is not None and i_ml is not None:
+        return "sufficient" if i_ml * TOLERANCE >= r_ml else "insufficient"
+
+    # Both weight units
+    r_g = _to_g(recipe_amount, r_unit) if r_unit else None
+    i_g = _to_g(inv_quantity, i_unit) if i_unit else None
+    if r_g is not None and i_g is not None:
+        return "sufficient" if i_g * TOLERANCE >= r_g else "insufficient"
+
+    # Same unit (normalized)
+    if r_unit and r_unit == i_unit:
+        return "sufficient" if inv_quantity * TOLERANCE >= recipe_amount else "insufficient"
+
+    # INGREDIENT_CONVERSIONS lookup
+    name_lower = recipe_name.lower()
+    for keyword, unit_map in INGREDIENT_CONVERSIONS.items():
+        if keyword in name_lower:
+            # Try converting inventory unit
+            if i_unit in unit_map:
+                to_unit, factor = unit_map[i_unit]
+                inv_converted = inv_quantity * factor
+                # Now compare in to_unit
+                inv_ml2 = _to_ml(inv_converted, to_unit)
+                rec_ml2 = _to_ml(recipe_amount, r_unit) if r_unit else None
+                if inv_ml2 is not None and rec_ml2 is not None:
+                    return "sufficient" if inv_ml2 * TOLERANCE >= rec_ml2 else "insufficient"
+                inv_g2 = _to_g(inv_converted, to_unit)
+                rec_g2 = _to_g(recipe_amount, r_unit) if r_unit else None
+                if inv_g2 is not None and rec_g2 is not None:
+                    return "sufficient" if inv_g2 * TOLERANCE >= rec_g2 else "insufficient"
+                if to_unit == r_unit:
+                    return "sufficient" if inv_converted * TOLERANCE >= recipe_amount else "insufficient"
+            # Try converting recipe unit
+            if r_unit in unit_map:
+                to_unit, factor = unit_map[r_unit]
+                rec_converted = recipe_amount * factor
+                inv_ml3 = _to_ml(inv_quantity, i_unit) if i_unit else None
+                rec_ml3 = _to_ml(rec_converted, to_unit)
+                if inv_ml3 is not None and rec_ml3 is not None:
+                    return "sufficient" if inv_ml3 * TOLERANCE >= rec_ml3 else "insufficient"
+                inv_g3 = _to_g(inv_quantity, i_unit) if i_unit else None
+                rec_g3 = _to_g(rec_converted, to_unit)
+                if inv_g3 is not None and rec_g3 is not None:
+                    return "sufficient" if inv_g3 * TOLERANCE >= rec_g3 else "insufficient"
+                if to_unit == i_unit:
+                    return "sufficient" if inv_quantity * TOLERANCE >= rec_converted else "insufficient"
+            break
+
+    return "unit_uncertain"
+
+
 async def get_ingredient_names(
     tool_context: Optional[Any] = None,
     tool_config: Optional[Dict[str, Any]] = None,
@@ -1056,6 +1186,205 @@ async def get_ingredient_names(
             conn.close()
         except Exception:
             pass
+
+
+async def get_prioritized_ingredients(
+    max_ingredients: int = 20,
+    exclude_categories: str = "Condiments,Baking,Beverages",
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Return inventory ingredients filtered by category tier and sorted by expiry date.
+    Excludes condiments/baking/beverages. Hero ingredients (Meat, Produce, Dairy, Seafood)
+    are prioritized first. Useful for recipe search when inventory is large (50–200 items).
+    """
+    log_id = "[InventoryTools:get_prioritized_ingredients]"
+    db_path = _get_db_path(tool_config)
+    if not db_path:
+        return _error_response("read", "Missing db_path in tool_config.")
+
+    TIER1 = {"Meat", "Seafood", "Produce", "Dairy"}
+    TIER2 = {"Grains", "Frozen", "Canned", "Snacks", "Other"}
+    excluded = {c.strip() for c in exclude_categories.split(",") if c.strip()}
+
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _open_sqlite(db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT product_name, category, expires_at "
+            "FROM inventory WHERE quantity > 0 "
+            "ORDER BY CASE WHEN expires_at IS NULL OR expires_at = '' THEN 1 ELSE 0 END, expires_at ASC"
+        )
+        rows = cur.fetchall()
+
+        tier1_items: List[str] = []
+        tier2_items: List[str] = []
+
+        for row in rows:
+            category = (row["category"] or "Other").strip()
+            name = row["product_name"]
+            if category in excluded:
+                continue
+            if category in TIER1:
+                tier1_items.append(name)
+            elif category in TIER2 or category not in excluded:
+                tier2_items.append(name)
+
+        # Cap: fill tier1 first, then tier2 up to max_ingredients
+        selected_t1 = tier1_items[:max_ingredients]
+        remaining = max_ingredients - len(selected_t1)
+        selected_t2 = tier2_items[:remaining] if remaining > 0 else []
+        all_selected = selected_t1 + selected_t2
+
+        log.info(f"{log_id} Selected {len(all_selected)} ingredients (tier1={len(selected_t1)}, tier2={len(selected_t2)})")
+
+        if not all_selected:
+            return {
+                "status": "success",
+                "count": 0,
+                "ingredients": "",
+                "tier_breakdown": {"hero": [], "supporting": []},
+                "message": "No relevant ingredients found in inventory.",
+            }
+        return {
+            "status": "success",
+            "count": len(all_selected),
+            "ingredients": ",".join(all_selected),
+            "tier_breakdown": {"hero": selected_t1, "supporting": selected_t2},
+        }
+    except sqlite3.Error as e:
+        log.error(f"{log_id} SQLite error: {e}", exc_info=True)
+        return _error_response("read", f"SQLite error: {e}")
+    except Exception as e:
+        log.error(f"{log_id} Unexpected error: {e}", exc_info=True)
+        return _error_response("read", f"Unexpected error: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+async def check_recipe_ingredient_sufficiency(
+    recipes_json: str,
+    tool_context: Optional[Any] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Cross-check recipe ingredient quantities against inventory quantities.
+    Spoonacular matches ingredients by name only; this tool detects cases where
+    the user has the ingredient but not enough of it.
+
+    recipes_json: JSON string (or pre-serialized list) of recipe objects from
+                  get_top_3_meals / complex_search / get_meal_details_bulk.
+    """
+    log_id = "[InventoryTools:check_recipe_ingredient_sufficiency]"
+    db_path = _get_db_path(tool_config)
+    if not db_path:
+        return _error_response("read", "Missing db_path in tool_config.")
+
+    # Parse input
+    if isinstance(recipes_json, list):
+        recipes = recipes_json
+    else:
+        try:
+            recipes = json.loads(recipes_json)
+        except (json.JSONDecodeError, TypeError) as e:
+            return _error_response("read", f"Invalid recipes_json: {e}")
+
+    if not isinstance(recipes, list):
+        recipes = [recipes]
+
+    # Load inventory
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _open_sqlite(db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT product_name, quantity, quantity_unit, unit FROM inventory WHERE quantity > 0"
+        )
+        inv_rows = cur.fetchall()
+    except sqlite3.Error as e:
+        log.error(f"{log_id} SQLite error: {e}", exc_info=True)
+        return _error_response("read", f"SQLite error: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # Build inventory lookup list
+    inventory: List[Dict] = []
+    for row in inv_rows:
+        inventory.append({
+            "name": (row["product_name"] or "").strip(),
+            "quantity": float(row["quantity"] or 0),
+            "unit": (row["quantity_unit"] or row["unit"] or "").strip(),
+        })
+
+    enriched_recipes = []
+    for recipe in recipes:
+        insufficient: List[Dict] = []
+        used_ings = recipe.get("usedIngredients", [])
+
+        for ing in used_ings:
+            recipe_name = ing.get("ingredient", "")
+            if not recipe_name:
+                continue
+
+            # Find matching inventory row
+            match = None
+            for inv in inventory:
+                if _fuzzy_match_ingredient(inv["name"], recipe_name):
+                    match = inv
+                    break
+
+            if match is None:
+                continue  # not in inventory — trust Spoonacular
+
+            # Get amount/unit — prefer explicit fields, fall back to parsing measure
+            recipe_amount = ing.get("amount")
+            recipe_unit = ing.get("unit", "")
+            if recipe_amount is None:
+                measure = ing.get("measure", "")
+                parts = measure.split(None, 1)
+                try:
+                    recipe_amount = float(parts[0]) if parts else None
+                    recipe_unit = parts[1] if len(parts) > 1 else ""
+                except (ValueError, IndexError):
+                    recipe_amount = None
+                    recipe_unit = ""
+
+            result = _check_ingredient_quantity(
+                recipe_name, recipe_amount, recipe_unit,
+                match["quantity"], match["unit"],
+            )
+
+            if result != "sufficient":
+                have_str = f"{match['quantity']} {match['unit']}".strip()
+                need_str = f"{recipe_amount} {recipe_unit}".strip() if recipe_amount else ing.get("measure", "?")
+                insufficient.append({
+                    "ingredient": recipe_name,
+                    "have": have_str,
+                    "need": need_str,
+                    "status": result,
+                })
+
+        enriched = dict(recipe)
+        enriched["insufficientIngredients"] = insufficient
+        enriched_recipes.append(enriched)
+
+    log.info(f"{log_id} Checked {len(recipes)} recipes; insufficiency found in {sum(1 for r in enriched_recipes if r['insufficientIngredients'])} recipes")
+    return {
+        "status": "success",
+        "count": len(enriched_recipes),
+        "meals": enriched_recipes,
+    }
 
 
 async def list_inventory_items(

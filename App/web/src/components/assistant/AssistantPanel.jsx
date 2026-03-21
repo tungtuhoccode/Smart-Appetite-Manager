@@ -31,6 +31,7 @@ export const PANEL_THEMES = {
     messagesBg: "bg-[linear-gradient(180deg,rgba(255,255,255,0),rgba(240,253,244,0.55))]",
     bubbleBorder: "border-emerald-200/70",
     resizeHighlight: "bg-emerald-300/30",
+    placeholder: 'Try "Add 2 kg rice" or "What do I have?"',
   },
   recipe: {
     icon: ChefHatIcon,
@@ -40,6 +41,7 @@ export const PANEL_THEMES = {
     messagesBg: "bg-[linear-gradient(180deg,rgba(255,255,255,0),rgba(255,250,243,0.55))]",
     bubbleBorder: "border-amber-200/70",
     resizeHighlight: "bg-amber-300/30",
+    placeholder: 'Try "Find a pasta recipe" or "What can I make tonight?"',
   },
   shopping: {
     icon: ShoppingCartIcon,
@@ -49,6 +51,7 @@ export const PANEL_THEMES = {
     messagesBg: "bg-[linear-gradient(180deg,rgba(255,255,255,0),rgba(240,249,255,0.55))]",
     bubbleBorder: "border-sky-200/70",
     resizeHighlight: "bg-sky-300/30",
+    placeholder: 'Try "Find the cheapest store" or "Plan my shopping route"',
   },
 };
 
@@ -417,7 +420,7 @@ export function AssistantPanel({
                 placeholder={
                   listening
                     ? "Listening..."
-                    : 'Try "Add 2 kg rice" or "What do I have?"'
+                    : (theme.placeholder ?? 'Ask me anything...')
                 }
                 value={input}
                 onChange={(e) => {

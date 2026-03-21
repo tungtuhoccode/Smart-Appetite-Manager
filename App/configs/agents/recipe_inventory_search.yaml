@@ -1,7 +1,7 @@
 log:
   stdout_log_level: INFO
 
-!include ../../shared_config.yaml
+!include ../shared_config.yaml
 
 apps:
   - name: recipe-inventory-search_app
@@ -32,42 +32,49 @@ apps:
 
         STEP 1 — GET INVENTORY:
         - If the message contains an Inventory JSON payload, extract ingredient names from it.
-        - Otherwise, call `get_inventory_for_recipes` to fetch the categorized pantry list
-          with quantities, categories, and priority scores.
-        - Do NOT dump the inventory list back to the user. Just use it for ingredient selection.
-
-        STEP 1.5 — SELECT INGREDIENTS FOR SEARCH:
-        Based on the inventory and the user's request, select 5-10 KEY ingredients for the API call.
-        Sending too many ingredients reduces search quality.
-
-        Selection strategy:
-        a) START with items from `use_first` — these are perishable items that should be used soon.
-           They are the highest priority for recipe search.
-        b) If the user MENTIONS specific ingredients (e.g., "something with chicken"),
-           ensure those ingredients are included even if they aren't in `use_first`.
-        c) Fill remaining slots with a balanced set from `by_category`:
-           - 1-2 proteins (from Meat & Poultry / Seafood)
-           - 2-3 vegetables/produce
-           - 1 grain/pasta/staple
-           - Skip pantry staples (salt, pepper, oil, flour, sugar) — Spoonacular ignores these anyway
-        d) Prefer items with HIGHER priority scores (combining perishability + quantity + age).
-        e) Aim for 5-10 ingredients total for optimal API results.
-        f) When user specifies a diet (e.g., vegetarian), exclude non-matching categories
-           (e.g., skip Meat & Poultry for vegetarian).
-        g) If the inventory has items past their shelf life (days_old > shelf_life_days),
-           WARN the user about those items and exclude them from search.
+        - Otherwise, call `get_prioritized_ingredients` to fetch the current pantry list.
+          This filters out condiments/baking/beverages and returns the most useful ingredients
+          (hero: Meat/Produce/Dairy/Seafood first, then Grains/Frozen/Canned, capped at 20).
+        - Do NOT dump the inventory list back to the user. Just use the names for searching.
 
         STEP 2 — SEARCH RECIPES:
         - If the user specified diet, cuisine, intolerances, or prep time → use `complex_search`
-          with the selected 5-10 ingredients plus the relevant filters.
+          with `sort_by="min-missing-ingredients"` and `sort_direction="asc"`.
           complex_search already returns full recipe info (ingredients, instructions, diets, etc.)
           so you do NOT need to call get_meal_details afterward.
-        - If no filters → use `get_top_3_meals` with the selected ingredients, then call
-          `get_meal_details_bulk` with the comma-separated IDs to fetch full details in ONE call.
+        - If no filters → use `get_top_3_meals`, then call `get_meal_details_bulk` with
+          the comma-separated IDs to fetch full details for all recipes in ONE call.
+        - Always pass `sort_by="min-missing-ingredients"` and `sort_direction="asc"` to
+          complex_search for inventory-based searches (prioritizes "cook right now" recipes).
+        - If the user mentions a meal type (breakfast, lunch, dinner, soup, dessert, etc.),
+          pass `meal_type` accordingly to complex_search.
 
-        STEP 3 — RESPOND:
+        CHIP → API PARAMETER MAPPING:
+        When the request contains a chip keyword, apply these parameter overrides to complex_search
+        (keep sort_by="min-missing-ingredients" unless a chip explicitly overrides it):
+        - "quick dinners" / "under 30 minutes"  → max_ready_time=30, meal_type="main course"
+        - "vegetarian"                           → diet="vegetarian"
+        - "high protein" / "sorted by protein"  → query+="high protein"
+        - "comfort food"                         → query+="comfort food"
+        - "one-pot meal" / "one pot"             → query+="one pot meal"
+        - "meal prep" / "batch cook"             → query+="meal prep"
+
+        SPICY PREFERENCE:
+        Spoonacular has no native spice-level filter. Map user preference via query string:
+        - "spicy"                                → append "spicy" to query
+        - "mild" / "not spicy"                   → append "mild" to query
+
+        STEP 3 — CHECK INGREDIENT SUFFICIENCY:
+        - Call `check_recipe_ingredient_sufficiency` with the meals array as JSON.
+        - Use the enriched results (they now contain `insufficientIngredients`).
+        - Skip only if recipe search returned an error.
+
+        STEP 4 — RESPOND:
         - Present results sorted by match score.
         - ALWAYS include the ```recipe_data JSON block (see format below).
+        - If `insufficientIngredients` is non-empty, list them:
+          "You may need more: [ingredient] (have: X, need: Y)"
+          Mark status="unit_uncertain" as "(quantity unclear — check your stock)"
 
         RULES:
         - NEVER ask follow-up questions. NEVER ask about preferences. Just search immediately.
@@ -92,7 +99,8 @@ apps:
            ingredients (array of {name, measure}),
            instructions (full cooking instructions string),
            scores (object with final_score, pantry_coverage_score, prep_time_score,
-           preference_match_score, missing_ingredient_count, explanation).
+           preference_match_score, missing_ingredient_count, explanation),
+           insufficientIngredients (array of {ingredient, have, need, status}).
 
         Example:
         ```recipe_data
@@ -102,15 +110,14 @@ apps:
         The ```recipe_data block is REQUIRED. Without it the frontend cannot display recipe cards.
 
       tools:
-        # Rich inventory tool (preferred for recipe search)
+        # Inventory tool
         - tool_type: python
           component_base_path: "src"
           component_module: "inventory_agent.inventory_manager_tools"
-          function_name: "get_inventory_for_recipes"
+          function_name: "get_prioritized_ingredients"
           tool_config:
             db_path: ${INVENTORY_MANAGER_DB_NAME}
 
-        # Fallback inventory tool
         - tool_type: python
           component_base_path: "src"
           component_module: "inventory_agent.inventory_manager_tools"
@@ -143,6 +150,13 @@ apps:
           component_base_path: "src"
           component_module: "recipe_agent.mealdb_tools"
           function_name: "get_meal_details"
+
+        - tool_type: python
+          component_base_path: "src"
+          component_module: "inventory_agent.inventory_manager_tools"
+          function_name: "check_recipe_ingredient_sufficiency"
+          tool_config:
+            db_path: ${INVENTORY_MANAGER_DB_NAME}
 
       session_service:
         type: ${PERSISTENCE_TYPE, memory}

@@ -1,7 +1,7 @@
 log:
   stdout_log_level: INFO
 
-!include ../../shared_config.yaml
+!include ../shared_config.yaml
 
 apps:
   - name: live-pricing-agent_app

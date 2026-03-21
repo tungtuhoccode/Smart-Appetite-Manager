@@ -1,3 +1,6 @@
+volumes:
+  inventory_data:
+
 services:
   sam-app:
     build:
@@ -8,6 +11,9 @@ services:
     env_file: App/.env
     environment:
       OCR_SERVICE_URL: http://ocr-service:8002
+      INVENTORY_MANAGER_DB_NAME: /app/data/inventory.db
+    volumes:
+      - inventory_data:/app/data
     depends_on:
       ocr-service:
         condition: service_healthy
@@ -19,6 +25,10 @@ services:
     ports:
       - "8001:8001"
     env_file: App/.env
+    environment:
+      INVENTORY_MANAGER_DB_NAME: /app/data/inventory.db
+    volumes:
+      - inventory_data:/app/data
     entrypoint: []
     command:
       [
@@ -44,3 +54,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  web:
+    build:
+      context: App/web
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - inventory-api
+      - sam-app

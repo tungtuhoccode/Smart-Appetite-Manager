@@ -41,12 +41,12 @@ import {
 const RECIPE_SESSION_KEY = "recipe_gateway_session_id";
 
 const AI_TAGS = [
-  { label: "Quick dinners", prompt: "Find quick dinner recipes based on my current inventory" },
-  { label: "High protein", prompt: "Suggest high protein meals I can make with my current inventory" },
-  { label: "Comfort food", prompt: "What comfort food recipes can I make with what I have in my inventory?" },
-  { label: "Vegetarian", prompt: "Find vegetarian recipes using ingredients from my current inventory" },
-  { label: "One-pot meals", prompt: "Suggest one-pot meal recipes based on my current inventory" },
-  { label: "Meal prep", prompt: "What meal prep recipes can I make with my current inventory?" },
+  { label: "Quick dinners",  prompt: "Find quick dinner recipes under 30 minutes from my inventory" },
+  { label: "High protein",   prompt: "Suggest high protein meals from my inventory, sorted by protein content" },
+  { label: "Comfort food",   prompt: "Find comfort food recipes I can make with my inventory" },
+  { label: "Vegetarian",     prompt: "Find vegetarian recipes using my current inventory" },
+  { label: "One-pot meals",  prompt: "Suggest one-pot meal recipes from my current inventory" },
+  { label: "Meal prep",      prompt: "Find meal prep recipes I can batch cook with my inventory" },
 ];
 
 const DISCOVER_TAGS = ["Chicken", "Pasta", "Beef", "Seafood", "Vegetarian", "Dessert"];

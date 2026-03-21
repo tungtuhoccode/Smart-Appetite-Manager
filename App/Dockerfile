@@ -9,6 +9,7 @@ FROM solace/solace-agent-mesh:1.13.3
 USER root
 COPY --from=builder /app/requirements.txt .
 RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
+RUN mkdir -p /app/data && chown solaceai:solaceai /app/data
 
 USER solaceai
 COPY --chown=solaceai:solaceai configs/ /app/configs/

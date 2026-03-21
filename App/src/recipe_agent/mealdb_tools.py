@@ -108,7 +108,7 @@ async def _find_by_ingredients_raw(ingredients: str, number: int = 10) -> List[D
         "apiKey": api_key,
         "ingredients": ingredients,
         "number": number,
-        "ranking": 1,
+        "ranking": 2,
         "ignorePantry": "true",
     }
     url = f"{SPOONACULAR_BASE}/recipes/findByIngredients?{urllib.parse.urlencode(params)}"
@@ -205,16 +205,25 @@ def _normalize_recipe(raw: Dict, scores: Optional[Dict] = None) -> Dict[str, Any
     missed_ings = raw.get("missedIngredients", [])
 
     def _fmt_ing(ing: Dict) -> Dict:
+        raw_amount = ing.get("amount", "")
+        raw_unit = ing.get("unit", "")
         return {
             "ingredient": ing.get("name", ""),
-            "measure": f"{ing.get('amount', '')} {ing.get('unit', '')}".strip(),
+            "measure": f"{raw_amount} {raw_unit}".strip(),
+            "amount": float(raw_amount) if raw_amount != "" else None,
+            "unit": str(raw_unit) if raw_unit else "",
         }
 
     # Extract full ingredient list from extendedIngredients (available when
     # addRecipeInformation=true or from /information endpoint)
     ext_ings = raw.get("extendedIngredients", [])
     ingredients = [
-        {"ingredient": ing.get("name", ""), "measure": f"{ing.get('amount', '')} {ing.get('unit', '')}".strip()}
+        {
+            "ingredient": ing.get("name", ""),
+            "measure": f"{ing.get('amount', '')} {ing.get('unit', '')}".strip(),
+            "amount": float(ing.get("amount", "")) if ing.get("amount", "") != "" else None,
+            "unit": str(ing.get("unit", "")) if ing.get("unit", "") else "",
+        }
         for ing in ext_ings
     ] if ext_ings else []
 
@@ -250,12 +259,23 @@ async def complex_search(
     intolerances: str = "",
     cuisine: str = "",
     max_ready_time: int = 0,
-    number: int = 5,
+    number: int = 10,
+    meal_type: str = "",
+    sort_by: str = "",
+    sort_direction: str = "desc",
+    offset: int = 0,
     tool_context: Any = None,
 ) -> Dict[str, Any]:
     """
     Advanced recipe search with filters for diet, cuisine, intolerances, and prep time.
     Falls back to findByIngredients then random recipes if no results.
+
+    meal_type: breakfast, lunch, main course, side dish, dessert, appetizer, salad,
+               bread, soup, beverage, sauce, snack, drink, etc.
+    sort_by: popularity, healthiness, price, time, random, max-used-ingredients,
+             min-missing-ingredients, calories, protein, fat, etc.
+    sort_direction: asc or desc
+    offset: pagination offset
     """
     try:
         api_key = _get_api_key()
@@ -267,6 +287,9 @@ async def complex_search(
         "number": number,
         "fillIngredients": "true",
         "addRecipeInformation": "true",
+        "instructionsRequired": "true",
+        "addRecipeInstructions": "true",
+        "ignorePantry": "true",
     }
     if query:
         params["query"] = query
@@ -282,6 +305,13 @@ async def complex_search(
         params["cuisine"] = cuisine
     if max_ready_time > 0:
         params["maxReadyTime"] = max_ready_time
+    if meal_type:
+        params["type"] = meal_type
+    if sort_by:
+        params["sort"] = sort_by
+        params["sortDirection"] = sort_direction
+    if offset > 0:
+        params["offset"] = offset
 
     url = f"{SPOONACULAR_BASE}/recipes/complexSearch?{urllib.parse.urlencode(params)}"
     fallback_used = None

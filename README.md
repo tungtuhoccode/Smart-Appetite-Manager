@@ -66,28 +66,41 @@ If `uv` is missing on macOS:
 brew install uv
 ```
 
-## Docker Alternative
+## Docker (Recommended for full stack)
+
+The repo ships a `docker-compose.yml` that starts all four services together:
+
+| Service | Port | Description |
+|---------|------|-------------|
+| `sam-app` | 8000 | Solace Agent Mesh (AI orchestration) |
+| `inventory-api` | 8001 | Inventory REST API |
+| `ocr-service` | 8002 | Barcode / OCR service |
+| `web` | 5173 | React frontend |
+
+**Prerequisites:** Docker Desktop (includes Compose v2).
 
 ```bash
-cd App
-cp .env.example .env
-# edit .env as above
-docker build -t sam-hackathon-quickstart .
-docker run -d --rm -p 8000:8000 --env-file .env --name sam-app sam-hackathon-quickstart
+# 1. Copy and fill in env vars (repo root)
+cp App/.env.example App/.env
+# edit App/.env — set LLM keys, SPOONACULAR_API_KEY, SERPAPI_KEY
+# INVENTORY_MANAGER_DB_NAME is set automatically to /app/data/inventory.db
+
+# 2. Build and start
+docker compose up --build -d
+
+# 3. Open the app
+open http://localhost:5173
 ```
 
-Logs/stop:
+The inventory database is stored in a named Docker volume (`inventory_data`) mounted at
+`/app/data` inside the containers. It persists across restarts and is created automatically
+on first run — no manual SQL step required.
+
+Logs / stop:
 
 ```bash
-docker logs -f sam-app
-docker stop sam-app
+docker compose logs -f          # stream all services
+docker compose logs inventory-api   # single service
+docker compose down             # stop and remove containers (volume kept)
+docker compose down -v          # stop and remove containers + volume (wipes DB)
 ```
-
-Keep this in `App/.env`:
-
-```env
-INVENTORY_MANAGER_DB_NAME=inventory.db
-```
-
-With this setup, the DB file lives at `App/inventory.db` when running locally,
-and the `inventory` table is created automatically if missing.
