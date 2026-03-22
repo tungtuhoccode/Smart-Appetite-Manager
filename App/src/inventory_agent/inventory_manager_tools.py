@@ -1329,6 +1329,8 @@ async def check_recipe_ingredient_sufficiency(
 
     enriched_recipes = []
     for recipe in recipes:
+        if not isinstance(recipe, dict):
+            continue  # skip malformed entries (e.g. plain strings passed by LLM)
         insufficient: List[Dict] = []
         used_ings = recipe.get("usedIngredients", [])
 
