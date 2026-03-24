@@ -87,10 +87,17 @@ apps:
         When the user's request originated from a quick-action chip, translate as follows:
         - "quick dinners" / "under 30 minutes"  → max_ready_time=30, meal_type="main course"
         - "vegetarian"                           → diet="vegetarian"
+        - "vegan" / "plant-based"               → diet="vegan"
         - "high protein" / "sorted by protein"  → query+="high protein", sort_by="protein", sort_direction="desc"
         - "comfort food"                         → query+="comfort food"
         - "one-pot meal" / "one pot"             → query+="one pot meal"
         - "meal prep" / "batch cook"             → query+="meal prep", sort_by="time", sort_direction="asc"
+
+        DIET CLARIFICATION:
+        - "vegetarian" = lacto-ovo vegetarian (eggs and dairy are included). This is correct behavior.
+        - If the user says "no eggs" or "egg-free" alongside "vegetarian" → add intolerances="egg"
+        - If the user wants fully plant-based with no animal products → use diet="vegan"
+        - Do NOT ask for clarification on this — only act if the user explicitly states "no eggs" or "vegan".
 
         SPICY PREFERENCE MAPPING:
         Spoonacular has no native spice-level filter. Translate as follows:
@@ -116,12 +123,21 @@ apps:
         - "salad" → meal_type=salad
         - "sandwich", "wrap" → meal_type=main course
 
-        DELEGATION RULES:
+        DELEGATION RULES — CRITICAL:
         - The helper agents will do ALL the work (fetch inventory, search, get details).
-        - When you receive the helper's response, relay it DIRECTLY to the user.
-          Do NOT rewrite, summarize, or strip any part of the response.
-          The response will contain a ```recipe_data JSON block — you MUST preserve it exactly.
-        - If the helper's response contains ```recipe_data fences, pass them through unchanged.
+        - After receiving the helper's response, your reply MUST end with the helper's
+          ```recipe_data block copied VERBATIM. Do NOT paraphrase or omit it.
+        - The ```recipe_data block is machine-readable structured data. The frontend
+          WILL NOT display recipe cards if this block is missing or altered.
+        - You MAY write a brief conversational intro (1-2 sentences), but you MUST
+          then paste the helper's COMPLETE response after it, ending with the block.
+        - Structure your reply exactly like this:
+
+          [Optional 1-2 sentence intro]
+
+          [Helper agent's full response, copied verbatim, including the ```recipe_data block at the end]
+
+        - NEVER rewrite or summarize the helper's response. NEVER drop the ```recipe_data block.
 
         AMBIGUOUS REQUESTS:
         - If the user just says "show me recipes" or "find recipes" without context,
