@@ -107,33 +107,26 @@ export function extractRecipeData(text) {
     return { recipes: null, cleanText: text || "" };
   }
 
-  const match = text.match(/```recipe_data\s*\n?([\s\S]*?)\n?```/i);
-  console.log("[extractRecipeData] regex matched:", !!match);
+  // Require closing ``` to be at the start of a line (\n```) to avoid
+  // stopping early at triple-backticks embedded inside a JSON string value
+  // (e.g. inside an instructions field like "Add ```flour``` and mix").
+  const match = text.match(/```recipe_data[^\n]*\n([\s\S]*?)\n```/);
   if (!match) {
-    // Debug: check if the text has literal \n instead of real newlines
-    const hasLiteralEscapes = text.includes("\\n");
-    const hasBackticks = text.includes("```");
-    console.log("[extractRecipeData] hasLiteralEscapes:", hasLiteralEscapes, "hasBackticks:", hasBackticks);
-    if (hasLiteralEscapes) {
-      console.log("[extractRecipeData] Text near recipe_data:", text.slice(text.indexOf("recipe_data") - 10, text.indexOf("recipe_data") + 40));
-    }
     return { recipes: null, cleanText: text };
   }
 
   let recipes = null;
   try {
     const parsed = JSON.parse(match[1].trim());
-    console.log("[extractRecipeData] JSON.parse success, isArray:", Array.isArray(parsed), "length:", parsed?.length);
     if (Array.isArray(parsed) && parsed.length > 0) {
       recipes = parsed;
     }
-  } catch (e) {
-    console.error("[extractRecipeData] JSON.parse failed:", e.message);
-    console.log("[extractRecipeData] captured block preview:", match[1].slice(0, 200));
+  } catch {
+    // invalid JSON in recipe_data block
   }
 
   // Remove the recipe_data block from the displayed text
-  const cleanText = text.replace(/```recipe_data\s*\n?[\s\S]*?\n?```/i, "").trim();
+  const cleanText = text.replace(/```recipe_data[^\n]*\n[\s\S]*?\n```/, "").trim();
 
   return { recipes, cleanText };
 }
@@ -147,7 +140,7 @@ export function extractRoutePlanData(text) {
     return { routeData: null, cleanText: text || "" };
   }
 
-  const match = text.match(/```route_plan_data\s*\n?([\s\S]*?)\n?```/i);
+  const match = text.match(/```route_plan_data[^\n]*\n([\s\S]*?)\n```/);
   if (!match) {
     return { routeData: null, cleanText: text };
   }
@@ -163,7 +156,7 @@ export function extractRoutePlanData(text) {
   }
 
   const cleanText = routeData
-    ? text.replace(/```route_plan_data\s*\n?[\s\S]*?\n?```/i, "").trim()
+    ? text.replace(/```route_plan_data[^\n]*\n[\s\S]*?\n```/, "").trim()
     : text;
 
   return { routeData, cleanText };
@@ -178,7 +171,7 @@ export function extractShopperMapData(text) {
     return { mapData: null, cleanText: text || "" };
   }
 
-  const match = text.match(/```shopper_map_data\s*\n?([\s\S]*?)\n?```/i);
+  const match = text.match(/```shopper_map_data[^\n]*\n([\s\S]*?)\n```/);
   if (!match) {
     return { mapData: null, cleanText: text };
   }
@@ -196,7 +189,7 @@ export function extractShopperMapData(text) {
   // Only strip the block from text when we successfully parsed map data.
   // If parsing failed, leave the block so MarkdownRenderer can attempt to render it.
   const cleanText = mapData
-    ? text.replace(/```shopper_map_data\s*\n?[\s\S]*?\n?```/i, "").trim()
+    ? text.replace(/```shopper_map_data[^\n]*\n[\s\S]*?\n```/, "").trim()
     : text;
 
   return { mapData, cleanText };

@@ -10,7 +10,7 @@ import { useInventorySuggestions } from "@/hooks/useInventorySuggestions";
 import { useRecipeSearch } from "@/hooks/useRecipeSearch";
 import { useRecipeDetails } from "@/hooks/useRecipeDetails";
 import { useSavedRecipes } from "@/hooks/useSavedRecipes";
-import { getRandomMeal, toRecipeCard, normalizeAgentRecipeList } from "@/lib/mealdb";
+import { getRandomMeal, toRecipeCard } from "@/lib/mealdb";
 import { RecipeDetailsDialog } from "@/components/recipes/RecipeDetailsDialog";
 import { RecipeCard } from "@/components/recipes/RecipeCard";
 import { SavedRecipesGrid } from "@/components/recipes/SavedRecipesGrid";
@@ -55,23 +55,6 @@ const STORAGE_KEYS = {
   gatewayUrl: "inventory_gateway_url",
   sessionId: RECIPE_SESSION_KEY,
 };
-
-const AI_GROUPS_KEY = "ai_recipe_groups_v1";
-const AI_COLLAPSED_KEY = "ai_recipe_groups_collapsed_v1";
-
-function loadPersistedGroups() {
-  try {
-    const raw = localStorage.getItem(AI_GROUPS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function loadCollapsedState() {
-  try {
-    const raw = localStorage.getItem(AI_COLLAPSED_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
-}
 
 function formatGroupDate(iso) {
   const d = new Date(iso);
@@ -203,58 +186,31 @@ export default function RecipeDiscoveryPage() {
     };
   }, []);
 
-  // Persistent AI recipe groups
-  const [aiRecipeGroups, setAiRecipeGroups] = useState(loadPersistedGroups);
-  const [collapsedGroups, setCollapsedGroups] = useState(loadCollapsedState);
-  const seenGroupIds = useRef(new Set(loadPersistedGroups().map((g) => g.id)));
-
-  // Merge new groups from chat messages into persisted groups
-  useEffect(() => {
+  // Derive recipe groups directly from chat messages — always in sync, no localStorage.
+  const aiRecipeGroups = useMemo(() => {
+    const groups = [];
     let lastUserText = null;
-    const newGroups = [];
     for (const msg of chat.messages) {
       if (msg.role === "user") {
         lastUserText = msg.text;
-      } else if (msg.role === "assistant") {
-        console.log("[ResearchTab] assistant msg:", msg.id, "recipeData:", msg.recipeData?.length ?? "none", "seen:", seenGroupIds.current.has(msg.id));
-        if (Array.isArray(msg.recipeData) && msg.recipeData.length > 0) {
-          if (seenGroupIds.current.has(msg.id)) continue;
-          const normalized = msg.recipeData[0]?.provider
-            ? msg.recipeData
-            : normalizeAgentRecipeList(JSON.stringify(msg.recipeData));
-          console.log("[ResearchTab] normalized recipes:", normalized.length, "from query:", lastUserText);
-          newGroups.push({ id: msg.id, query: lastUserText, recipes: normalized, timestamp: new Date().toISOString() });
-          seenGroupIds.current.add(msg.id);
-        }
+      } else if (msg.role === "assistant" && Array.isArray(msg.recipeData) && msg.recipeData.length > 0) {
+        groups.push({ id: msg.id, query: lastUserText, recipes: msg.recipeData, timestamp: new Date().toISOString() });
       }
     }
-    if (newGroups.length > 0) {
-      console.log("[ResearchTab] Adding", newGroups.length, "new group(s)");
-      setAiRecipeGroups((prev) => [...prev, ...newGroups]);
-    }
+    return groups.reverse();
   }, [chat.messages]);
 
-  // Persist groups to localStorage
-  useEffect(() => {
-    localStorage.setItem(AI_GROUPS_KEY, JSON.stringify(aiRecipeGroups));
-  }, [aiRecipeGroups]);
-
-  // Persist collapsed state to localStorage
-  useEffect(() => {
-    localStorage.setItem(AI_COLLAPSED_KEY, JSON.stringify(collapsedGroups));
-  }, [collapsedGroups]);
+  const [collapsedGroups, setCollapsedGroups] = useState({});
 
   const toggleGroupCollapsed = useCallback((groupId) => {
     setCollapsedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
   }, []);
 
   const clearAllGroups = useCallback(() => {
-    setAiRecipeGroups([]);
+    client.resetSession();
+    chat.clearMessages();
     setCollapsedGroups({});
-    seenGroupIds.current.clear();
-    localStorage.removeItem(AI_GROUPS_KEY);
-    localStorage.removeItem(AI_COLLAPSED_KEY);
-  }, []);
+  }, [chat, client]);
 
   const inventoryMeta = useMemo(() => {
     if (!inventory.itemCount) return "Pantry is empty";
@@ -672,9 +628,24 @@ export default function RecipeDiscoveryPage() {
         {/* === RESEARCH (AI) TAB === */}
         {activeTab === "research" && (
           <>
+            {chat.sending && (
+              <Card className="border-orange-100">
+                <CardContent className="p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <SparklesIcon className="w-4 h-4 text-orange-500 animate-pulse" />
+                    <span className="text-sm text-muted-foreground">Chef Agent is finding recipes…</span>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <div key={`ai-skel-${i}`} className="h-72 rounded-xl bg-muted animate-pulse" />
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             {aiRecipeGroups.length > 0 ? (
               <>
-                {[...aiRecipeGroups].reverse().map((group) => {
+                {aiRecipeGroups.map((group) => {
                   const isCollapsed = !!collapsedGroups[group.id];
                   return (
                     <Card key={`ai-group-${group.id}`} className="border-orange-100 overflow-hidden">
@@ -832,7 +803,7 @@ export default function RecipeDiscoveryPage() {
         activeTimeline={chat.activeTimeline}
         input={chat.input}
         onInputChange={chat.setInput}
-        onSend={() => void chat.send()}
+        onSend={() => { client.resetSession(); setActiveTab("research"); void chat.send(); }}
         sending={chat.sending}
         suggestions={AI_TAGS}
         onSuggestionClick={handleQuickSuggestion}

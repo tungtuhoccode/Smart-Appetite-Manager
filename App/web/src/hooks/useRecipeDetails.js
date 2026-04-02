@@ -25,8 +25,10 @@ export function useRecipeDetails(client, sessionKey) {
       setError(null);
 
       try {
-        // If the recipe already has cached instructions + ingredients, use them directly
-        if (recipe.provider === "agent" && recipe.instructions && recipe.ingredients?.length > 0) {
+        // Agent recipes always use card data directly — never re-fetch.
+        // The card already has every field the dialog needs from the recipe_data JSON block.
+        // Re-fetching by ID risks returning the wrong dish entirely.
+        if (recipe.provider === "agent") {
           setDetails({
             title: recipe.title,
             imageUrl: recipe.imageUrl || "",
@@ -57,6 +59,7 @@ export function useRecipeDetails(client, sessionKey) {
           const normalized = normalizeAgentRecipeDetails(response.text, recipe);
           setDetails({
             ...normalized,
+            imageUrl: recipe.imageUrl || normalized.imageUrl,
             usedIngredients: recipe.usedIngredients || [],
             missingIngredients: recipe.missingIngredients || [],
             readyInMinutes: recipe.readyInMinutes || 0,

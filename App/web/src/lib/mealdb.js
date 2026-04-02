@@ -184,6 +184,65 @@ export function normalizeAgentRecipeList(responseText) {
     .filter(Boolean);
 }
 
+/**
+ * Parse recipes from a markdown-formatted agent response.
+ * Used as a last-resort fallback when the agent omits the recipe_data block
+ * but still produces a numbered list with **Title** and ![alt](imageUrl) markers.
+ * Spoonacular image URLs embed the recipe ID, so we can reconstruct minimal cards.
+ */
+export function parseMarkdownRecipeList(text) {
+  if (!text || typeof text !== "string") return [];
+
+  // Split at each \n immediately before a numbered list item (delimiter consumed).
+  // Each section then starts with "N. **Title**".
+  const sections = text.split(/\n(?=\d+\.\s)/);
+  const recipes = [];
+
+  for (const section of sections) {
+    const titleMatch = section.match(/^\d+\.\s+\*\*([^*\n]+)\*\*/);
+    if (!titleMatch) continue;
+    const title = titleMatch[1].trim();
+
+    // Image URL is optional — recipes without images still get a card
+    const imageMatch = section.match(/!\[[^\]]*\]\((https?:[^)]+)\)/);
+    const imageUrl = imageMatch ? imageMatch[1].trim() : "";
+
+    const idMatch = imageUrl.match(/\/recipes\/(\d+)\//);
+    const id = idMatch ? idMatch[1] : `md-${recipes.length}`;
+
+    const summaryLines = section
+      .split("\n")
+      .map((l) => l.replace(/^[-*\s]+/, "").replace(/\*\*/g, "").trim())
+      .filter((l) => l && !l.match(/^!\[/) && !l.match(/^\d+\.\s/) && l.length > 20)
+      .slice(0, 2);
+    const summary = summaryLines.join(" ").slice(0, 200) || title;
+
+    const timeMatch = section.match(/(\d+)\s*(?:min|minutes)/i);
+
+    recipes.push({
+      id,
+      title,
+      imageUrl,
+      summary,
+      readyInMinutes: timeMatch ? parseInt(timeMatch[1]) : null,
+      servings: null,
+      diets: [],
+      cuisines: [],
+      usedIngredients: [],
+      missingIngredients: [],
+      usedIngredientCount: 0,
+      missingIngredientCount: 0,
+      ingredients: [],
+      instructions: "",
+      sourceUrl: "",
+      provider: "agent",
+      scores: null,
+    });
+  }
+
+  return recipes;
+}
+
 export function normalizeAgentRecipeDetails(responseText, fallbackRecipe) {
   const parsed = tryParseJSON(responseText);
   const source =

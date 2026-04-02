@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { extractMessageTextParts } from "@/api/gateway";
 import { responseToChatText, extractRecipeData, extractShopperMapData, extractRoutePlanData } from "@/lib/parseResponse";
-import { normalizeAgentRecipeList } from "@/lib/mealdb";
+import { normalizeAgentRecipeList, parseMarkdownRecipeList } from "@/lib/mealdb";
 import {
   appendExecutionLifecycleStep,
   applyArtifactUpdateToTimeline,
@@ -139,12 +139,14 @@ export function useAssistantChat(client, agentName, options = {}) {
       const timeline = getExecutionTimelineSnapshot(tracker);
 
       const rawText = responseToChatText(result);
-      console.log("[RecipeDebug] rawText length:", rawText.length);
-      console.log("[RecipeDebug] rawText preview:", rawText.slice(0, 200));
-      console.log("[RecipeDebug] contains recipe_data block:", /```recipe_data/i.test(rawText));
+
+      // Tier 0: search the accumulated streaming text for recipe_data.
+      // This is the most direct path to the helper agent's raw output — it captures
+      // the recipe_data block before the routing agent has a chance to rewrite/lose it.
+      const streamedText = streamingPartsRef.current.join("");
+      const { recipes: streamedRecipeData, cleanText: streamedCleanText } = extractRecipeData(streamedText);
 
       const { recipes: explicitRecipeData, cleanText: afterRecipe } = extractRecipeData(rawText);
-      console.log("[RecipeDebug] extractRecipeData result:", explicitRecipeData?.length ?? "null");
 
       const { mapData: shopperMapData, cleanText: afterMap } = extractShopperMapData(afterRecipe);
       const { routeData: routePlanData, cleanText } = extractRoutePlanData(afterMap);
@@ -153,37 +155,58 @@ export function useAssistantChat(client, agentName, options = {}) {
       // then fall back to parsing the full response for any JSON recipe arrays,
       // then fall back to scanning streaming status updates (helper agent responses
       // may contain recipe_data blocks that the routing agent rewrote)
-      let recipeData = explicitRecipeData;
+      let recipeData = streamedRecipeData?.length ? streamedRecipeData : explicitRecipeData;
       if (!recipeData || !recipeData.length) {
-        console.log("[RecipeDebug] Tier 1 (explicit) empty, trying normalizeAgentRecipeList on rawText");
         const detected = normalizeAgentRecipeList(rawText);
-        console.log("[RecipeDebug] Tier 2 (normalize rawText) result:", detected.length);
         if (detected.length > 0) {
           recipeData = detected;
         }
       }
       if (!recipeData || !recipeData.length) {
-        console.log("[RecipeDebug] Tier 2 empty, trying statusTexts. Count:", statusTexts.length);
-        const combined = statusTexts.join("\n");
-        const { recipes: statusRecipes } = extractRecipeData(combined);
-        console.log("[RecipeDebug] Tier 3a (extractRecipeData on statusTexts):", statusRecipes?.length ?? "null");
-        if (statusRecipes?.length) {
-          recipeData = statusRecipes;
-        } else {
-          const detected = normalizeAgentRecipeList(combined);
-          console.log("[RecipeDebug] Tier 3b (normalize statusTexts):", detected.length);
+        // Iterate each status text individually — joining them causes tryParseJSON to match
+        // the wrong (first/smallest) code block when multiple ```-fenced blocks exist.
+        for (const st of [...statusTexts, streamedText]) {
+          if (!st) continue;
+          const { recipes: sr } = extractRecipeData(st);
+          if (sr?.length) {
+            recipeData = sr;
+            break;
+          }
+          const detected = normalizeAgentRecipeList(st);
           if (detected.length > 0) {
             recipeData = detected;
+            break;
           }
         }
       }
-      console.log("[RecipeDebug] Final recipeData count:", recipeData?.length ?? "null");
+      // Tier 4: parse recipe titles + image URLs from markdown-formatted text.
+      // Try both streamedText (helper agent's full output, what chat displays) and rawText
+      // (routing agent's final summary, which may mention fewer recipes). Use whichever
+      // source yields more recipe cards.
+      if (!recipeData || !recipeData.length) {
+        const fromStreamed = parseMarkdownRecipeList(streamedText);
+        const fromRaw = parseMarkdownRecipeList(rawText);
+        const markdownRecipes = fromStreamed.length >= fromRaw.length ? fromStreamed : fromRaw;
+        if (markdownRecipes.length > 0) {
+          recipeData = markdownRecipes;
+        }
+      }
+
+      // Normalize to consistent schema (adds provider:"agent") if not already set.
+      // Tiers 0/1 extract raw agent JSON which lacks the provider field — normalize it
+      // so RecipeDiscoveryPage can use the data directly without a stringify roundtrip.
+      if (recipeData?.length && !recipeData[0]?.provider) {
+        const normalized = normalizeAgentRecipeList(JSON.stringify(recipeData));
+        if (normalized.length > 0) recipeData = normalized;
+      }
 
       // Update streaming message in-place or create a new one
       const streamingId = streamingMsgIdRef.current;
-      const streamedText = streamingPartsRef.current.join("");
-      // Streamed text already contains the full response — use it directly
-      const finalText = (streamingId && streamedText) ? streamedText : cleanText;
+      // streamedText already computed above for Tier 0 extraction.
+      // Use the clean version (recipe_data block stripped) if we extracted recipes from it.
+      const finalText = (streamingId && streamedText)
+        ? (streamedRecipeData?.length ? streamedCleanText : streamedText)
+        : cleanText;
 
       if (streamingId) {
         setMessages((prev) => prev.map((m) =>
@@ -257,6 +280,10 @@ export function useAssistantChat(client, agentName, options = {}) {
     }
   }, [client, agentName, input, sending, idPrefix, errorLabel, onComplete, flushStreamingText, cleanupStreaming]);
 
+  const clearMessages = useCallback(() => {
+    setMessages([{ id: `${idPrefix}-welcome`, role: "assistant", text: welcomeText }]);
+  }, [idPrefix, welcomeText]);
+
   return {
     messages,
     input,
@@ -264,5 +291,6 @@ export function useAssistantChat(client, agentName, options = {}) {
     sending,
     activeTimeline,
     send,
+    clearMessages,
   };
 }
