@@ -4,6 +4,11 @@ Smart Appetite Manager is an AI-powered platform designed to help you manage you
 
 <img width="1884" height="892" alt="SAM Architecture" src="https://github.com/user-attachments/assets/f1ebaf3a-84c0-4b5a-9a70-1dc2151eb545" />
 
+# Demo
+Introduction: https://www.youtube.com/watch?v=aN6QUuNy1js
+Adding Inventory With AI Agent using voice: https://www.youtube.com/watch?v=KaQdP0ZcKFI
+Finding deals with AI agents, and shopping with Agentic Driven Generative UI: https://www.youtube.com/watch?v=Yh29bVOd-08
+
 # Smart Appetite Manager Setup Instructions
 
 Use the `App/` folder as the project root (not repository root).
