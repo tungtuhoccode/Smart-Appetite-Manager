@@ -6,7 +6,9 @@ Smart Appetite Manager is an AI-powered platform designed to help you manage you
 
 # Demo
 Introduction: https://www.youtube.com/watch?v=aN6QUuNy1js
+
 Adding Inventory With AI Agent using voice: https://www.youtube.com/watch?v=KaQdP0ZcKFI
+
 Finding deals with AI agents, and shopping with Agentic Driven Generative UI: https://www.youtube.com/watch?v=Yh29bVOd-08
 
 # Smart Appetite Manager Setup Instructions
